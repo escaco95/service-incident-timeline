@@ -1,4 +1,5 @@
 import { severity, createDateUtils } from './date-utils.js';
+import { createOperationsUI } from './operations-ui.js';
 
 let timezone = 'UTC';
 let { dateParts, dateKey, calendarDate, startOfDay, addDays, fromDateKey, dayBounds, overlaps, onDay, timeLabel, dateTimeInput, parseDateTimeInput, formatDay, formatDateTime, weekSegments, daySegment } = createDateUtils(timezone);
@@ -67,6 +68,8 @@ async function api(url, options = {}) {
   }
   return result;
 }
+
+const operationsUI = createOperationsUI({ api, escape, generation: () => sessionGeneration, authenticated: () => state.authenticated, events: () => state.events, openEvent: id => openDetail(id), localInput: value => dateTimeInput(value), parseInput: value => parseDateTimeInput(value), formatTime: value => formatDateTime(value), onChanged: () => loadEvents() });
 
 function brand() {
   return `<div class="brand"><img class="brand-mark" src="/favicon.svg" alt=""><div class="brand-copy"><div class="brand-name" title="${escape(branding.name)}">${escape(branding.name)}</div>${branding.subtitle ? `<div class="brand-caption" title="${escape(branding.subtitle)}">${escape(branding.subtitle)}</div>` : ''}</div></div>`;
@@ -250,6 +253,7 @@ function endSession() {
   state.editing = null;
   state.deleting = null;
   state.highlightedId = null;
+  operationsUI.clear();
   for (const dialog of document.querySelectorAll('dialog')) dialog.close();
   $('#event-form').reset();
   $('#event-error').textContent = '';
@@ -671,6 +675,7 @@ function openEditor(event = null, day = state.date) {
   $('#event-timezone').textContent = `${timezone} 기준 · 24시간제 (00:00~23:59)`;
   $('#event-dialog').showModal();
   form.elements.title.focus();
+  operationsUI.openEditor(event);
 }
 
 function openDetail(id) {
@@ -678,6 +683,13 @@ function openDetail(id) {
   if (!event) { toast('이미 삭제된 이벤트입니다.', true); return; }
   $('#detail-content').innerHTML = `<div class="dialog-heading"><div><span class="detail-type ${event.category}"><i class="dot ${event.category}"></i>${categories[event.category]}</span><h2 id="detail-title">${escape(event.title)}</h2></div><button class="icon-button" data-close="detail-dialog" aria-label="닫기">×</button></div><dl class="detail-meta"><dt>서비스</dt><dd>${escape(event.service || '지정하지 않음')}</dd><dt>시작 시각</dt><dd>${formatDateTime(event.start)}</dd><dt>종료 시각</dt><dd>${event.end === null ? '종료 시각 미정 <span class="infinity">∞</span>' : formatDateTime(event.end)}</dd><dt>시간대</dt><dd>${escape(timezone)}</dd></dl><div class="detail-description">${escape(event.description || '추가로 기록된 내용이 없습니다.')}</div><div class="detail-bottom">마지막 수정 ${formatDateTime(event.updatedAt)}</div><div class="dialog-actions"><button class="text-danger" data-action="request-delete" data-id="${event.id}">이벤트 삭제</button><div class="detail-right"><button class="button secondary" data-close="detail-dialog">닫기</button><button class="button primary" data-action="edit-event" data-id="${event.id}">${icon('edit')}편집</button></div></div>`;
   $('#detail-dialog').showModal();
+  const execution = event.execution;
+  if (execution) {
+    const note = document.createElement('div');
+    note.className = 'detail-operation';
+    note.innerHTML = `<p class="form-hint">${execution.enabled ? `상태 계산에 포함 · 영향 ${escape(execution.impact)}` : '기록 전용'} · ${execution.endMode === 'confirmed' ? '운영자 확인 종료' : '종료 시각에 종료'}${execution.confirmedEnd ? ` · 확인 ${escape(formatDateTime(execution.confirmedEnd))}` : ''}</p><button class="button secondary" data-action="state-preview">상태 미리보기</button>${execution.endMode === 'confirmed' && !execution.confirmedEnd && Date.parse(event.start) < Date.now() ? `<button class="button secondary" data-action="confirm-event-end" data-id="${event.id}">종료 확인</button>` : ''}`;
+    $('#detail-content .dialog-actions').before(note);
+  }
 }
 
 function openOverflow(day, highlightedId = null) {
@@ -761,6 +773,7 @@ $('#event-form').addEventListener('submit', async event => {
   if (editing) fields.version = editing.version;
   $('#event-save').disabled = true;
   try {
+    Object.assign(fields, operationsUI.eventFields());
     const result = await api(editing ? `/api/events/${editing.id}` : '/api/events', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(fields) });
     // Keep a just-saved event visible, even when a category filter was active.
     if (state.filter !== 'all' && state.filter !== result.event.category) state.filter = 'all';
@@ -833,6 +846,20 @@ document.addEventListener('click', async click => {
   if (!state.authenticated) return;
   switch (action) {
     case 'branding-settings': openBrandingSettings(); break;
+    case 'state-preview': operationsUI.openPreview(); break;
+    case 'confirm-event-end': {
+      const event = state.events.find(item => item.id === button.dataset.id);
+      if (!event) break;
+      button.disabled = true;
+      try {
+        await api(`/api/events/${event.id}/confirm-end`, { method: 'POST', body: JSON.stringify({ version: event.version }) });
+        await loadEvents();
+        $('#detail-dialog').close();
+        openDetail(event.id);
+      } catch (error) { toast(error.message, true); }
+      finally { button.disabled = false; }
+      break;
+    }
     case 'view': state.view = button.dataset.view; renderApp(); break;
     case 'filter': state.filter = button.dataset.filter; state.highlightedId = null; renderApp(); break;
     case 'today': chooseDate(new Date()); break;

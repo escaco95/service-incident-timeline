@@ -11,6 +11,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/operations-ui.js', ['operations-ui.js', 'text/javascript; charset=utf-8']],
   ['/theme.js', ['theme.js', 'text/javascript; charset=utf-8']],
   ['/date-utils.js', ['date-utils.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
@@ -50,7 +51,7 @@ export async function createApp(options = {}) {
     const chunks = [];
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > 32 * 1024) throw new AppError(413, '요청 내용이 너무 큽니다.');
+      if (size > 256 * 1024) throw new AppError(413, '요청 내용이 너무 큽니다.');
       chunks.push(chunk);
     }
     let body;
@@ -126,6 +127,17 @@ export async function createApp(options = {}) {
         if (req.method === 'GET') return send(res, 200, await brandingStore.read());
         if (req.method === 'PUT') return send(res, 200, await brandingStore.save(await json(req)));
       }
+      if (pathname === '/api/operations/settings') {
+        if (req.method === 'GET') return send(res, 200, vault.readOperations());
+        if (req.method === 'PUT') return send(res, 200, await vault.saveOperations(await json(req)));
+      }
+      if (req.method === 'POST' && pathname === '/api/operations/preview') return send(res, 200, vault.preview(await json(req)));
+      if (req.method === 'GET' && pathname === '/api/operations/changes') {
+        const query = new URL(req.url, 'http://localhost').searchParams;
+        return send(res, 200, vault.changes(Number(query.get('offset') ?? 0), Number(query.get('limit') ?? 50)));
+      }
+      const confirmation = /^\/api\/events\/([0-9a-f-]{36})\/confirm-end$/.exec(pathname);
+      if (req.method === 'POST' && confirmation) return send(res, 200, await vault.confirmEnd(confirmation[1], (await json(req)).version));
       if (req.method === 'POST' && pathname === '/api/logout') {
         sessions.delete(token);
         setCookie(res, '', 0);

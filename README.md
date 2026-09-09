@@ -110,6 +110,17 @@ node --env-file=.env server.mjs
 
 1차 버전에는 알림 발송과 이벤트 조회 배치를 포함하지 않습니다. 2차는 알림 발송, 3차는 커넥터 기반 이벤트 조회 배치입니다. 화면 및 단계별 요구사항은 [기획 명세](docs/specification.md)에 기록했습니다.
 
+## 서비스 상태 계산과 커넥터 계약 검토
+
+설정에서 암호화된 서비스 제안 목록과 상태 정책을 관리하고, 이벤트에 여러 서비스 또는 직접 입력 항목을 지정할 수 있습니다. 적용 범위를 확인한 이벤트는 대상별 상태 계산에 포함하며, 중첩·확인 종료·정책 및 연결 변경을 반영한 예상 상태를 조회합니다. 현재 웹 앱은 외부 API를 호출하지 않습니다.
+
+- [사용법·데이터 이관·인증 API](docs/operations-model.md)
+- [커넥터 계약 v1 검토 초안](docs/connector-contract-v1.md)
+- [사내 커넥터 개발 시작·검증·역할 분담](docs/connector-handoff.md)
+- [가상 서비스·정책 예제](examples/operations.example.json)
+
+빌드·패키지 설치 없이 `node scripts/connector-demo.mjs`로 가상 대상의 사전 확인·적용·검증과 호출 기록을 확인할 수 있습니다. 실제 예약 실행기·영속 outbox·재시도·실행 이력 화면은 계약 검토 후 이어서 구현합니다.
+
 ## 암호화와 로그인
 
 1. 최초 접근 시 12~256자 비밀번호를 설정합니다. 확인 입력은 화면에서 검사합니다.
@@ -158,10 +169,10 @@ workflow는 기본적으로 비활성화되어 있으며 배포할 저장소의 
 ## 검증
 
 ```sh
-node --test test/date-utils.test.mjs test/server.test.mjs
+node --test test/*.test.mjs
 ```
 
-암호화·잘못된 키·파일 변조·손상 보존, 세션 격리, 동시 쓰기·수정 충돌, 재시작 복원, 날짜 경계·주간 레인을 검증합니다. 실제 운영 디렉터리를 사용하지 않습니다.
+암호화·잘못된 키·파일 변조·손상 보존, 세션 격리, 동시 쓰기·수정 충돌, 재시작 복원, 날짜 경계·주간 레인과 서비스 이관·중첩 상태·연결 변경·계약 오류·응답 유실을 검증합니다. 실제 운영 디렉터리를 사용하지 않습니다. 현재 Windows와 Node.js 24.13.1에서 검증했으며 macOS 실행은 아직 검증하지 않았습니다.
 
 이미 설치된 Chromium 계열 브라우저로 화면을 검증할 수도 있습니다.
 
@@ -180,6 +191,10 @@ branding.json          환경별 브랜딩 설정 (선택, Git 제외)
 public/theme.js        첫 화면 테마 적용, 브라우저별 모드 저장·전환
 lib/branding.mjs       브랜딩 설정 읽기·검증·저장 및 충돌 검사
 lib/vault.mjs          키 도출, 암호화 JSON 저장, 이벤트 검증
+lib/operations.mjs     서비스·정책·범위 확인과 순수 상태 계산
+lib/connector-contract.mjs  계약 검사, 허용 필드 정제, 단일 호출 어댑터
+connectors/mock.mjs    네트워크 없는 가상 커넥터
+public/operations-ui.js  서비스 선택·업무 설정·상태 미리보기
 public/app.js          캘린더·타임라인·수동 이벤트 관리
 public/date-utils.js   날짜 구간 및 이벤트 막대 배치
 public/styles.css      외부 폰트·이미지 없이 반응형 화면

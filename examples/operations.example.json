@@ -1,0 +1,15 @@
+{
+  "services": [
+    { "id": "resource-a", "name": "가상 서비스 A", "active": true, "connectorId": "mock" },
+    { "id": "resource-b", "name": "가상 서비스 B", "active": true, "connectorId": "mock" }
+  ],
+  "policy": {
+    "baseline": "nominal",
+    "tieBreak": "state-order",
+    "states": [
+      { "id": "unavailable", "name": "중단", "priority": 20 },
+      { "id": "limited", "name": "제한", "priority": 10 },
+      { "id": "nominal", "name": "기준", "priority": 0 }
+    ]
+  }
+}

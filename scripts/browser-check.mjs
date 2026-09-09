@@ -720,6 +720,49 @@ try {
   await click(`document.querySelector('[data-view="timeline"]')`);
   await evaluate(`(() => { const input = document.querySelector('#timeline-date-input'); input.value = '2026-09-09'; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
 
+  // Manage a private catalog and policy through the UI, then use both catalog and free entries.
+  await click(`document.querySelector('[data-action="branding-settings"]')`);
+  await click(`document.querySelector('#open-operations-settings')`);
+  await waitFor('!document.querySelector("#operations-fields").disabled', 'private operations settings');
+  for (const [id, name] of [['resource-a', '가상 서비스 A'], ['resource-b', '가상 서비스 B']]) {
+    await click(`document.querySelector('#catalog-add')`);
+    await evaluate(`(() => { const row = Array.from(document.querySelectorAll('[data-catalog-row]')).at(-1); row.querySelector('[data-key=id]').value = '${id}'; row.querySelector('[data-key=name]').value = '${name}'; row.querySelector('[data-key=connectorId]').value = 'mock'; })()`);
+  }
+  for (const [id, name, priority] of [['limited', '제한', 10], ['nominal', '기준', 0]]) {
+    await click(`document.querySelector('#policy-state-add')`);
+    await evaluate(`(() => { const row = Array.from(document.querySelectorAll('[data-policy-row]')).at(-1); row.querySelector('[data-key=id]').value = '${id}'; row.querySelector('[data-key=name]').value = '${name}'; row.querySelector('[data-key=priority]').value = '${priority}'; row.querySelector('[data-key=id]').dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  }
+  await evaluate(`document.querySelector('#operations-form').elements.baseline.value = 'nominal'; document.querySelector('#operations-form').requestSubmit()`);
+  await waitFor('!!document.querySelector("[data-catalog-row] [data-key=id][readonly]")', 'private operations settings saved');
+  await screenshot('operations-settings');
+  await click(`document.querySelector('[data-close="operations-dialog"]')`);
+  await click(`document.querySelector('[data-close="branding-dialog"]')`);
+  await click(`document.querySelector('[data-action="new-event"]')`);
+  await waitFor('!document.querySelector("#event-save").disabled', 'service picker loaded');
+  await click(`document.querySelector('[data-service-pick="resource-a"]')`);
+  await evaluate(`document.querySelector('#event-form').elements.service.value = '직접 입력 서비스'`);
+  await click(`document.querySelector('#service-custom-add')`);
+  await evaluate(`(() => { const form = document.querySelector('#event-form'); form.elements.title.value = '복수 서비스 상태 계산'; form.elements.calculationEnabled.checked = true; form.elements.impact.value = 'limited'; form.elements.endMode.value = 'confirmed'; form.elements.confirmAuthorization.checked = true; form.requestSubmit(); })()`);
+  await waitFor('document.querySelector("#event-error").textContent.includes("직접 입력 서비스")', 'unmapped free entry blocks enabling');
+  await evaluate(`(() => { const select = document.querySelector('[data-service-target]'); select.value = 'resource-b'; select.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('.event-operations').open = true; })()`);
+  await screenshot('multi-service-editor');
+  await evaluate(`document.querySelector('#event-form').requestSubmit()`);
+  await waitFor('!document.querySelector("#event-dialog").open', 'multi-service event saved');
+  const multiple = await evaluate(`(async () => (await (await fetch('/api/events')).json()).events.find(event => event.title === '복수 서비스 상태 계산'))()`);
+  assert.deepEqual(multiple.services.map(entry => entry.kind), ['catalog', 'custom']);
+  assert.equal(multiple.services[1].targetId, 'resource-b');
+  assert.equal(multiple.execution.enabled, true);
+  await click(`document.querySelector('[data-action="branding-settings"]')`);
+  await click(`document.querySelector('#open-state-preview')`);
+  await waitFor('document.querySelectorAll(".state-card").length === 2', 'target state preview');
+  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.state-card>span')).map(span => span.dataset.state)`), ['limited', 'limited']);
+  await screenshot('state-preview');
+  await click(`document.querySelector('[data-close="state-preview-dialog"]')`);
+  await click(`document.querySelector('[data-close="branding-dialog"]')`);
+  // Restore the original calendar fixture density for the existing layout checks.
+  await evaluate(`(async () => { const response = await fetch('/api/events/${multiple.id}', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: ${multiple.version} }) }); if (!response.ok) throw new Error('Multi-service fixture cleanup failed'); document.dispatchEvent(new Event('visibilitychange')); })()`);
+  await waitFor('!document.querySelector("#timeline-rows").textContent.includes("복수 서비스 상태 계산")', 'multi-service fixture removed');
+
   await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await delay(300);
   await evaluate('document.querySelector("#toast").hidden = true');
@@ -751,6 +794,11 @@ try {
   await evaluate(`(() => { const form = document.querySelector('#branding-form'); form.elements.timezone.value = 'custom'; form.elements.timezone.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   assert.ok(await evaluate('document.querySelector("#branding-dialog").scrollWidth <= document.querySelector("#branding-dialog").clientWidth'), 'custom timezone must fit the mobile dialog');
   await screenshot('branding-custom-timezone-mobile');
+  await click(`document.querySelector('#open-operations-settings')`);
+  await waitFor('!document.querySelector("#operations-fields").disabled', 'mobile operations settings');
+  assert.ok(await evaluate('document.querySelector("#operations-dialog").scrollWidth <= document.querySelector("#operations-dialog").clientWidth'), 'private settings fit a mobile dialog');
+  await screenshot('operations-settings-mobile');
+  await click(`document.querySelector('[data-close="operations-dialog"]')`);
   await click(`document.querySelector('[data-close="branding-dialog"]')`);
   await click(`document.querySelector('.day-cell[data-date="2026-09-09"] .day-more')`);
   assert.ok(await evaluate('document.querySelector("#overflow-dialog").scrollWidth <= document.querySelector("#overflow-dialog").clientWidth'), 'event dates must fit the mobile popup');
@@ -768,11 +816,13 @@ try {
   await screenshot('mobile-login-dark');
   assert.equal(await evaluate('document.querySelector(".brand-name").textContent'), branding.name);
   assert.equal(await evaluate('document.querySelector("#detail-content").textContent'), '');
+  assert.equal(await evaluate('document.querySelector("#operations-services").textContent'), '');
+  assert.equal(await evaluate('document.querySelector("#event-services").textContent'), '');
   assert.equal(await evaluate('document.querySelector("#auth-form").elements.password.value'), '');
   await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(password)}; form.requestSubmit(); })()`);
   await waitFor('!!document.querySelector(".calendar")', 'login again');
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('Browser checks passed: branding, default theme, browser preference persistence, cross-window sync, blocked storage, theme changes without server writes, setup, session, calendar date and badge popups, empty-day creation, keyboard and pointer navigation, timeline highlight, bidirectional infinite scroll, manual CRUD, mobile layout, XSS rendering, logout and login.');
+  console.log('Browser checks passed: branding, default theme, browser preference persistence, cross-window sync, blocked storage, theme changes without server writes, setup, session, calendar date and badge popups, empty-day creation, keyboard and pointer navigation, timeline highlight, bidirectional infinite scroll, manual CRUD, encrypted service and policy settings, mixed service selection, state preview, mobile layout, XSS rendering, logout and login.');
   console.log(`Screenshots: ${output}`);
 } catch (error) {
   if (socket?.readyState === WebSocket.OPEN) await screenshot('failure').catch(() => {});

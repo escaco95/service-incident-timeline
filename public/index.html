@@ -20,7 +20,8 @@
     <form id="event-form">
       <div class="dialog-heading"><div><p class="eyebrow">EVENT RECORD</p><h2 id="event-dialog-title">이벤트 추가</h2></div><button type="button" class="icon-button" data-close="event-dialog" aria-label="닫기">×</button></div>
       <label class="field">이벤트 제목 <span class="required">*</span><input name="title" required maxlength="120" placeholder="어떤 일이 있었나요?" autocomplete="off"></label>
-      <div class="field-row"><label class="field">유형<select name="category"><option value="maintenance">점검</option><option value="instability">불안정</option><option value="incident">장애</option></select></label><label class="field">서비스 <span class="optional">선택</span><input name="service" maxlength="80" placeholder="예: 결제 API" autocomplete="off"></label></div>
+      <label class="field">유형<select name="category"><option value="maintenance">점검</option><option value="instability">불안정</option><option value="incident">장애</option></select></label>
+      <fieldset class="service-picker"><legend>서비스 <span class="optional">복수 선택·직접 입력</span></legend><div id="event-services" class="service-tags"></div><div class="service-search"><input name="service" maxlength="80" placeholder="서비스 검색 또는 직접 입력" autocomplete="off" aria-label="서비스 검색 또는 직접 입력"><button type="button" class="button secondary" id="service-custom-add">직접 추가</button></div><div id="service-suggestions" class="service-suggestions" role="group" aria-label="서비스 제안 목록"></div><p id="service-picker-status" class="form-hint" role="status"></p></fieldset>
       <div class="field-row">
         <fieldset class="field datetime-field"><legend>시작 시각 <span class="required">*</span></legend>
           <input name="startDate" type="date" min="1900-01-01" max="9998-12-31" aria-label="시작 날짜" required>
@@ -32,6 +33,7 @@
         </fieldset>
       </div>
       <label class="check-field"><input name="openEnded" type="checkbox"><span>종료 시각 미정 <span class="infinity">∞</span></span></label>
+      <details class="event-operations"><summary>상태 계산 설정</summary><p class="form-hint">예상 상태를 계산하는 기능입니다. 외부 서비스는 변경하지 않습니다.</p><label class="check-field"><input name="calculationEnabled" type="checkbox"><span>이 이벤트를 상태 계산에 포함</span></label><div class="field-row"><label class="field">상태 영향<select name="impact"><option value="">선택하지 않음</option></select></label><label class="field">종료 방식<select name="endMode"><option value="scheduled">종료 시각에 종료</option><option value="confirmed">운영자 확인까지 유지</option></select></label></div><p id="confirmed-end-status" class="form-hint"></p><label class="check-field"><input name="confirmAuthorization" type="checkbox"><span>선택한 대상·일정·영향·종료 방식과 현재 정책을 확인했습니다.</span></label></details>
       <label class="field">상세 내용 <span class="optional">선택</span><textarea name="description" rows="4" maxlength="4000" placeholder="영향 범위, 조치 내용, 참고할 사항을 기록하세요."></textarea></label>
       <p class="form-hint" id="event-timezone"></p>
       <p class="form-error" id="event-error" role="alert" hidden></p>
@@ -43,6 +45,7 @@
     <form id="branding-form">
       <div class="dialog-heading"><h2 id="branding-title">브랜딩 설정</h2><button type="button" class="icon-button" data-close="branding-dialog" aria-label="닫기">×</button></div>
       <p class="branding-description">모든 사용자가 함께 사용하는 이름과 표시 기본값입니다.</p>
+      <div class="operations-links"><button type="button" class="button secondary" id="open-operations-settings">서비스 제안 목록·상태 정책</button><button type="button" class="button secondary" id="open-state-preview">대상별 상태 미리보기</button></div>
       <p id="branding-loading" class="form-hint" role="status" hidden>설정을 불러오고 있습니다…</p>
       <fieldset id="branding-fields" class="branding-fields" disabled>
         <label class="field">서비스 이름 <span class="required">*</span><input name="name" required maxlength="64" autocomplete="off" placeholder="예: Payment Timeline"></label>
@@ -61,6 +64,8 @@
     </form>
   </dialog>
 
+  <dialog id="operations-dialog" class="dialog operations-dialog" aria-labelledby="operations-title"><form id="operations-form"><div class="dialog-heading"><h2 id="operations-title">서비스 제안 목록·상태 정책</h2><button type="button" class="icon-button" data-close="operations-dialog" aria-label="닫기">×</button></div><p class="form-hint">로그인 후 사용하는 업무 설정입니다. 변경 내용은 암호화하여 저장합니다.</p><fieldset id="operations-fields" class="branding-fields" disabled><h3>서비스 제안 목록</h3><p class="form-hint">ID는 생성 후 유지됩니다. 사용하지 않는 항목은 비활성화하세요. 커넥터 ID는 담당자가 확정한 연결만 입력하세요.</p><div id="operations-services"></div><button type="button" class="button secondary" id="catalog-add">서비스 추가</button><h3>상태 정책</h3><p class="form-hint">우선순위가 큰 상태를 적용합니다. 화면의 이벤트 유형·색상과 별도로 계산합니다.</p><div id="operations-policy-states"></div><button type="button" class="button secondary" id="policy-state-add">상태 추가</button><div class="field-row"><label class="field">활성 이벤트가 없을 때의 기준 상태<select name="baseline"></select></label><label class="field">우선순위가 같을 때<select name="tieBreak"><option value="state-order">상태 목록의 앞 항목</option><option value="latest-start">나중에 시작한 이벤트</option></select></label></div><div id="operations-affected" class="form-hint"></div></fieldset><p id="operations-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button secondary" id="operations-reload">다시 불러오기</button><button type="submit" class="button primary" id="operations-save" disabled>업무 설정 저장</button></div></form></dialog>
+  <dialog id="state-preview-dialog" class="dialog operations-dialog" aria-labelledby="state-preview-title"><div class="dialog-heading"><h2 id="state-preview-title">대상별 상태 미리보기</h2><button class="icon-button" data-close="state-preview-dialog" aria-label="닫기">×</button></div><p class="form-hint">등록된 일정과 정책으로 계산한 예상입니다. 외부 서비스의 실제 상태를 조회하거나 변경하지 않습니다.</p><form id="state-preview-form"><div class="preview-time"><input name="date" type="date" required aria-label="평가 날짜"><select name="hour" aria-label="평가 시" required></select><span>:</span><select name="minute" aria-label="평가 분" required></select><select name="hours" aria-label="예상 기간"><option value="24">다음 24시간</option><option value="72">다음 3일</option><option value="168">다음 7일</option></select><button class="button secondary" type="submit">계산</button></div></form><p id="state-preview-error" class="form-error" role="alert" hidden></p><div id="state-preview-content"></div></dialog>
   <dialog id="detail-dialog" class="dialog detail-dialog" aria-labelledby="detail-title"><div id="detail-content"></div></dialog>
   <dialog id="overflow-dialog" class="dialog overflow-dialog" aria-labelledby="overflow-title"><div id="overflow-content"></div></dialog>
   <dialog id="delete-dialog" class="dialog delete-dialog" aria-labelledby="delete-title">
