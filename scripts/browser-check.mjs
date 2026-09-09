@@ -185,6 +185,28 @@ async function checkCalendarTimeFills() {
   }
 }
 
+async function checkOverflowTimeFills(date, expected) {
+  const rows = await evaluate(`Array.from(document.querySelectorAll('.overflow-item')).map(row => {
+    const day = row.querySelector('.event-time-day'), active = row.querySelector('.event-time-active');
+    const cell = day.getBoundingClientRect(), fill = active.getBoundingClientRect(), box = row.getBoundingClientRect();
+    const body = row.querySelector('.overflow-item-body').getBoundingClientRect();
+    return { title: row.querySelector('strong').textContent, date: day.dataset.date,
+      left: (fill.left - cell.left) / cell.width, width: fill.width / cell.width,
+      fullWidth: Math.abs(cell.width - row.clientWidth) < 0.1,
+      textFits: body.top >= box.top && body.bottom <= box.bottom && row.scrollHeight <= row.clientHeight + 1,
+      hatched: getComputedStyle(day).backgroundImage.includes('repeating-linear-gradient'),
+      activePlain: getComputedStyle(active).backgroundImage === 'none' };
+  })`);
+  assert.equal(rows.length, expected.length);
+  for (const [title, left, width] of expected) {
+    const row = rows.find(item => item.title === title);
+    assert.ok(row, `missing popup row: ${title}`);
+    assert.equal(row.date, date, 'popup background must use its own selected date');
+    assert.ok(Math.abs(row.left - left) < 0.001 && Math.abs(row.width - width) < 0.001, JSON.stringify(row));
+    assert.ok(row.fullWidth && row.textFits && row.hatched && row.activePlain, JSON.stringify(row));
+  }
+}
+
 try {
   let port;
   await until(async () => {
@@ -340,6 +362,7 @@ try {
   assert.equal(await evaluate('document.querySelector("#timeline-date-input").value'), '2026-09-09');
   assert.ok(await evaluate('document.querySelector(".timeline-row.highlighted").textContent.includes("데이터베이스")'));
   await click(`document.querySelector('[data-action="view"][data-view="calendar"]')`);
+  await selectMonth(2026, 9); // The calendar selection is now Sep 1; open the Sep 9 popup.
   await click(`document.querySelector('.day-cell[data-date="2026-09-09"] .day-more')`);
   assert.equal(await evaluate('document.querySelectorAll(".overflow-item").length'), 5);
   const popupTimes = await evaluate(`Object.fromEntries(Array.from(document.querySelectorAll('.overflow-item')).map(button => [button.querySelector('strong').textContent, Array.from(button.querySelector('.overflow-times').children).map(child => child.textContent)]))`);
@@ -348,8 +371,17 @@ try {
   assert.deepEqual(popupTimes['인증 서비스 불안정'], ['시작', '당일 15:00', '종료', '미정 ∞']);
   assert.ok(await evaluate('document.querySelector(".overflow-context").textContent.includes("Asia/Seoul")'));
   assert.ok(await evaluate('document.querySelector("#overflow-title").textContent.includes("2026년")'));
+  const popupTimeFills = [
+    ['데이터베이스 정기 점검', 0, 1],
+    ['결제 API 응답 지연', (10 + 20 / 60) / 24, (3 + 25 / 60) / 24],
+    ['인증 서비스 불안정', 15 / 24, 9 / 24],
+    ['검색 인덱스 재구성', 18 / 24, 2 / 24],
+    ['네트워크 점검', 21 / 24, 2 / 24]
+  ];
+  await checkOverflowTimeFills('2026-09-09', popupTimeFills);
   await screenshot('event-list-dark');
   await click(themeControl);
+  await checkOverflowTimeFills('2026-09-09', popupTimeFills);
   await screenshot('event-list-light');
   await click(themeControl);
   await click(`Array.from(document.querySelectorAll('.overflow-item')).find(button => button.textContent.includes('결제 API'))`);
@@ -582,6 +614,10 @@ try {
   await click(`document.querySelector('.day-cell[data-date="2026-09-09"] .day-more')`);
   assert.ok(await evaluate('document.querySelector("#overflow-dialog").scrollWidth <= document.querySelector("#overflow-dialog").clientWidth'), 'event dates must fit the mobile popup');
   await screenshot('mobile-event-list');
+  await checkOverflowTimeFills('2026-09-09', popupTimeFills);
+  await click(`document.querySelector('[data-close="overflow-dialog"]')`);
+  await click(`document.querySelector('.day-cell[data-date="2026-09-10"] .day-more')`);
+  await checkOverflowTimeFills('2026-09-10', [['데이터베이스 정기 점검', 0, 11 / 24], ['인증 서비스 불안정', 0, 1]]);
   await click(`document.querySelector('[data-close="overflow-dialog"]')`);
   await click(`document.querySelector('[data-action="logout"]')`);
   await waitFor('!!document.querySelector("#auth-form")', 'logout');

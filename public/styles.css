@@ -717,11 +717,15 @@ svg.icon {
   pointer-events:none
 }
 
+.event-badge,.overflow-item {
+  --badge-active:var(--amber-pill);
+  --badge-inactive:var(--amber-pill-inactive);
+  color:var(--amber-badge-text)
+}
+
 .event-badge {
   --badge-inset-left:5px;
   --badge-inset-right:5px;
-  --badge-active:var(--amber-pill);
-  --badge-inactive:var(--amber-pill-inactive);
   position:relative;
   pointer-events:auto;
   border:0;
@@ -736,11 +740,10 @@ svg.icon {
   font-size:11px;
   font-weight:600;
   overflow:hidden;
-  background:var(--badge-inactive);
-  color:var(--amber-badge-text)
+  background:var(--badge-inactive)
 }
 
-.event-badge.incident {
+.event-badge.incident,.overflow-item.incident {
   --badge-active:var(--red-pill);
   --badge-inactive:var(--red-pill-inactive);
   color:var(--red-badge-text)
@@ -792,7 +795,7 @@ svg.icon {
   background:var(--badge-active)
 }
 
-.event-badge>:not(.event-time-fill) {
+.event-badge>:not(.event-time-fill),.overflow-item>:not(.event-time-fill) {
   position:relative
 }
 
@@ -1580,13 +1583,18 @@ svg.icon {
 }
 
 .overflow-item {
+  --badge-inset-left:0px;
+  --badge-inset-right:0px;
+  position:relative;
+  overflow:hidden;
   display:flex;
+  flex-shrink:0;
   gap:11px;
   align-items:center;
   width:100%;
   border:1px solid var(--line);
   border-radius:8px;
-  background:#fcfdfb;
+  background:var(--badge-inactive);
   padding:13px;
   text-align:left
 }
@@ -1615,11 +1623,11 @@ svg.icon {
   font-size:11px;
   line-height:1.6;
   font-variant-numeric:tabular-nums;
-  color:var(--ink)
+  color:inherit
 }
 
 .overflow-time-label {
-  color:var(--muted)
+  color:inherit
 }
 
 .overflow-item strong {
@@ -1633,13 +1641,13 @@ svg.icon {
 
 .overflow-item small {
   font-size:10px;
-  color:#8b9784;
+  color:inherit;
   display:block;
   margin-top:5px
 }
 
 .overflow-item .icon {
-  color:#9ba893;
+  color:inherit;
   width:15px;
   height:15px
 }
@@ -1903,7 +1911,7 @@ svg.icon {
   background:#202f27
 }
 
-:root[data-theme="dark"] :is(.field input,.field select,.field textarea,.overflow-item) {
+:root[data-theme="dark"] :is(.field input,.field select,.field textarea) {
   background:#15211b
 }
 
@@ -1915,7 +1923,7 @@ svg.icon {
   border-color:var(--line)
 }
 
-:root[data-theme="dark"] :is(.view-tab,.icon-button,.summary-icon,.summary-period,.filter,.weekdays,.day-add,.day-more,.timeline-header>.timeline-label,.timeline-label-count,.axis-date,.axis-tick,.axis-end,.timeline-service,.empty-message,.highlight-note button,.optional,.check-field,.form-hint,.detail-meta dt,.detail-bottom,.overflow-item small,.overflow-item .icon,.auth-label,.auth-story>p:not(.eyebrow),.visual-top,.visual-row,.auth-description,.password-toggle,.auth-notice,.auth-footer,.field input:disabled) {
+:root[data-theme="dark"] :is(.view-tab,.icon-button,.summary-icon,.summary-period,.filter,.weekdays,.day-add,.day-more,.timeline-header>.timeline-label,.timeline-label-count,.axis-date,.axis-tick,.axis-end,.timeline-service,.empty-message,.highlight-note button,.optional,.check-field,.form-hint,.detail-meta dt,.detail-bottom,.auth-label,.auth-story>p:not(.eyebrow),.visual-top,.visual-row,.auth-description,.password-toggle,.auth-notice,.auth-footer,.field input:disabled) {
   color:var(--muted)
 }
 

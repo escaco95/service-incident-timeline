@@ -352,6 +352,12 @@ function fitCalendar() {
   }
 }
 
+function renderEventTimeDay(event, day) {
+  // Share timezone-aware boundaries across calendar badges, popup rows and the timeline.
+  const portion = daySegment(event, day);
+  return `<span class="event-time-day" data-date="${day}"><span class="event-time-active" style="left:${(portion?.left ?? 0) * 100}%;width:${(portion?.width ?? 0) * 100}%"></span></span>`;
+}
+
 function renderCalendarWeeks(visibleLanes) {
   const { year, month } = dateParts(state.date);
   let start = calendarDate(year, month - 1, 1);
@@ -375,12 +381,7 @@ function renderCalendarWeeks(visibleLanes) {
       const event = segment.event;
       const description = `${categories[event.category]} · ${event.title} · ${formatDateTime(event.start)} ~ ${formatDateTime(event.end)}`;
       const dayCount = segment.end - segment.start + 1;
-      const fills = Array.from({ length: dayCount }, (_, index) => {
-        const day = addDays(weekStart, segment.start + index);
-        // Reuse the timeline's timezone-aware boundaries, including 23/25-hour days.
-        const portion = daySegment(event, day);
-        return `<span class="event-time-day" data-date="${day}"><span class="event-time-active" style="left:${(portion?.left ?? 0) * 100}%;width:${(portion?.width ?? 0) * 100}%"></span></span>`;
-      }).join('');
+      const fills = Array.from({ length: dayCount }, (_, index) => renderEventTimeDay(event, addDays(weekStart, segment.start + index))).join('');
       return `<button class="event-badge ${event.category}${!segment.startsHere ? ' continues-left' : ''}${!segment.endsHere ? ' continues-right' : ''}" style="grid-column:${segment.start + 1}/span ${dayCount};grid-row:${segment.lane + 1}" data-action="calendar-event" data-id="${event.id}" data-week="${dateKey(weekStart)}" data-start="${segment.start}" data-end="${segment.end}" title="이벤트를 눌러 타임라인 보기&#10;${escape(description)}&#10;밝은 영역: 이벤트 진행 시간 · 어두운 영역: 진행 시간 외" aria-label="${escape(description)}. 타임라인 보기"><span class="event-time-fill" style="--event-days:${dayCount}" aria-hidden="true">${fills}</span>${!segment.startsHere ? '<span class="edge-marker">‹</span>' : '<span class="dot"></span>'}<span class="event-name">${escape(event.title)}</span>${event.end === null ? '<span class="infinity" aria-label="종료 시각 미정">∞</span>' : !segment.endsHere ? '<span class="edge-marker">›</span>' : ''}</button>`;
     }).join('');
     weeks.push(`<div class="calendar-week" data-week="${dateKey(weekStart)}"><div class="day-cells">${cells}</div><div class="week-events">${badges}</div></div>`);
@@ -594,7 +595,7 @@ function openOverflow(day) {
   const endpoint = value => value === null
     ? '<span>미정 <span class="infinity" aria-label="종료 시각 미정">∞</span></span>'
     : `<time datetime="${escape(value)}" title="${escape(formatDateTime(value))}">${dateKey(value) === selectedDate ? `당일 ${timeLabel(value)}` : formatDateTime(value)}</time>`;
-  $('#overflow-content').innerHTML = `<div class="dialog-heading"><div><p class="eyebrow">DAY RECORDS · ${events.length} EVENTS</p><h2 id="overflow-title">${dateParts(day).year}년 ${formatDay(day)}의 이벤트</h2><p class="overflow-context">${escape(timezone)} 기준</p></div><button class="icon-button" data-close="overflow-dialog" aria-label="닫기">×</button></div><div class="overflow-list">${events.map(event => `<button class="overflow-item" data-action="overflow-event" data-id="${event.id}" data-date="${selectedDate}"><i class="dot ${event.category}"></i><span class="overflow-item-body"><strong>${escape(event.title)}</strong><small>${categories[event.category]} · ${escape(event.service || '전체 서비스')}</small><span class="overflow-times"><span class="overflow-time-label">시작</span> ${endpoint(event.start)}<span class="overflow-time-label">종료</span> ${endpoint(event.end)}</span></span>${icon('right')}</button>`).join('')}</div>`;
+  $('#overflow-content').innerHTML = `<div class="dialog-heading"><div><p class="eyebrow">DAY RECORDS · ${events.length} EVENTS</p><h2 id="overflow-title">${dateParts(day).year}년 ${formatDay(day)}의 이벤트</h2><p class="overflow-context">${escape(timezone)} 기준</p></div><button class="icon-button" data-close="overflow-dialog" aria-label="닫기">×</button></div><div class="overflow-list">${events.map(event => `<button class="overflow-item ${event.category}" data-action="overflow-event" data-id="${event.id}" data-date="${selectedDate}"><span class="event-time-fill" style="--event-days:1" aria-hidden="true">${renderEventTimeDay(event, selectedDate)}</span><i class="dot ${event.category}"></i><span class="overflow-item-body"><strong>${escape(event.title)}</strong><small>${categories[event.category]} · ${escape(event.service || '전체 서비스')}</small><span class="overflow-times"><span class="overflow-time-label">시작</span> ${endpoint(event.start)}<span class="overflow-time-label">종료</span> ${endpoint(event.end)}</span></span>${icon('right')}</button>`).join('')}</div>`;
   $('#overflow-dialog').showModal();
 }
 
