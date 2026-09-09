@@ -18,7 +18,7 @@ export function createDangerZoneUI({ api, generation, authenticated, onSavingCha
   const form = $('#reset-password-form');
   let selected = null, phase = null, saving = false;
   const error = text => { $('#reset-password-error').textContent = text; $('#reset-password-error').hidden = !text; };
-  const restoreFocus = target => $(`[data-reset-target="${target}"]`)?.focus();
+  const restoreFocus = target => $(target === 'restore' ? '#data-restore' : `[data-reset-target="${target}"]`)?.focus();
   $('#danger-zone-actions').addEventListener('click', event => {
     const button = event.target.closest('[data-reset-target]');
     if (!button || saving || !authenticated()) return;
@@ -31,8 +31,8 @@ export function createDangerZoneUI({ api, generation, authenticated, onSavingCha
   confirmDialog.querySelector('[data-reset-confirm]').addEventListener('click', () => {
     if (!selected || !authenticated() || selected.session !== generation()) return;
     phase = 'password'; confirmDialog.close(); form.reset(); error('');
-    $('#reset-password-description').textContent = `${TARGETS[selected.target].name}를 진행하려면 현재 로그인 비밀번호를 입력해 주세요.`;
-    $('#reset-submit').textContent = TARGETS[selected.target].name;
+    $('#reset-password-description').textContent = `${selected.target === 'restore' ? '데이터 복원' : TARGETS[selected.target].name}를 진행하려면 현재 로그인 비밀번호를 입력해 주세요.`;
+    $('#reset-submit').textContent = selected.target === 'restore' ? '데이터 복원' : TARGETS[selected.target].name;
     passwordDialog.showModal(); form.elements.password.focus();
   });
   for (const dialog of [confirmDialog, passwordDialog]) {
@@ -52,11 +52,12 @@ export function createDangerZoneUI({ api, generation, authenticated, onSavingCha
     const choice = selected, body = { target: choice.target, requestId: choice.requestId, confirmed: true, password: form.elements.password.value };
     saving = true; onSavingChange(true); error('');
     for (const control of form.elements) control.disabled = true;
-    $('#reset-submit').textContent = '초기화하고 있습니다…'; form.setAttribute('aria-busy', 'true');
+    $('#reset-submit').textContent = choice.target === 'restore' ? '복원을 요청하고 있습니다…' : '초기화하고 있습니다…'; form.setAttribute('aria-busy', 'true');
     try {
-      const result = await api('/api/settings/reset', { method: 'POST', body: JSON.stringify(body) });
+      const result = await api(choice.target === 'restore' ? `/api/settings/transfers/${choice.archive.id}/restore` : '/api/settings/reset', { method: 'POST', body: JSON.stringify(body) });
       if (choice.session !== generation()) return;
       selected = null; phase = null; passwordDialog.close();
+      if (choice.target === 'restore') { choice.onStarted(result); return; }
       await onReset(result);
       toast(result.cleanupPending ? '데이터를 초기화했습니다. 일부 이전 파일은 아직 정리하지 못했습니다.' : choice.target === 'system' ? '시스템을 초기화했습니다. 새 비밀번호를 설정해 주세요.' : `${TARGETS[choice.target].name}를 완료했습니다.`, !!result.cleanupPending);
     } catch (failure) {
@@ -64,9 +65,18 @@ export function createDangerZoneUI({ api, generation, authenticated, onSavingCha
     } finally {
       body.password = null; saving = false; onSavingChange(false);
       for (const control of form.elements) control.disabled = false;
-      form.removeAttribute('aria-busy'); $('#reset-submit').textContent = selected ? TARGETS[selected.target].name : '초기화';
+      form.removeAttribute('aria-busy'); $('#reset-submit').textContent = selected?.target === 'restore' ? '데이터 복원' : selected ? TARGETS[selected.target].name : '초기화';
       if (passwordDialog.open) form.elements.password.focus();
     }
   });
-  return { clear() { selected = null; phase = null; confirmDialog.close(); passwordDialog.close(); form.reset(); error(''); } };
+  return {
+    restore(archive, onStarted) {
+      if (saving || !authenticated()) return;
+      selected = { target: 'restore', archive, onStarted, requestId: crypto.randomUUID(), session: generation() }; phase = 'confirm';
+      $('#reset-confirm-title').textContent = '데이터 복원';
+      $('#reset-confirm-description').textContent = `${archive.name}의 데이터로 현재 이벤트, 서비스, 워크플로우, 감사 로그와 설정을 모두 교체합니다. 현재 비밀번호는 유지합니다. 실행 중 작업을 중지하며 백업의 미완료 실행은 자동 재개하지 않습니다.`;
+      confirmDialog.showModal();
+    },
+    clear() { selected = null; phase = null; confirmDialog.close(); passwordDialog.close(); form.reset(); error(''); }
+  };
 }

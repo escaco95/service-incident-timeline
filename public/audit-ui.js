@@ -25,6 +25,7 @@ const statusNames = { queued: '대기', running: '실행 중', skipped: '생략'
 Object.assign(changeNames, { 'log-policy-updated': '로그 관리 정책 변경', 'audit-rotated': '감사 로그 로테이션', 'events-expired': '이벤트 만료 처리', 'log-maintenance-failed': '로그 관리 처리 실패' });
 const maintenanceTypes = new Set(['audit-rotated', 'events-expired', 'log-maintenance-failed']);
 Object.assign(changeNames, { 'workflow-created': '워크플로우 생성', 'workflow-updated': '워크플로우 저장', 'workflow-enabled': '워크플로우 ON/OFF', 'workflow-deleted': '워크플로우 삭제', 'workflow-run-requested': '수동 실행 요청', 'workflow-rerun-requested': '다시 실행 요청', 'workflow-run-canceled': '실행 중지 요청' });
+changeNames['data-restored'] = '데이터 복원';
 
 export function createAuditUI({ api, escape, icon, generation, authenticated, active, today, dateBoundary, formatTime, dateSummary, events, openEvent }) {
   let request = 0, detailRequest = 0, filters = { kind: 'workflows', page: 1 };

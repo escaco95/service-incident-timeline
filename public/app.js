@@ -3,6 +3,7 @@ import { severity, createDateUtils } from './date-utils.js';
 import { createServicesUI } from './services-ui.js';
 import { createLogPolicyUI } from './log-policy-ui.js';
 import { createDangerZoneUI } from './danger-zone-ui.js';
+import { createDataTransferUI } from './data-transfer-ui.js';
 import { createAuditUI } from './audit-ui.js';
 import { createWorkflowUI } from './workflow-ui.js';
 
@@ -97,16 +98,20 @@ const logPolicyUI = createLogPolicyUI({ api, generation: () => sessionGeneration
 let pendingAuditEvent;
 const auditUI = createAuditUI({ api, escape, icon, generation: () => sessionGeneration, authenticated: () => state.authenticated, active: () => state.view === 'audit', today: () => dateKey(new Date()), dateBoundary: value => startOfDay(value).toISOString(), formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()), events: () => state.events, openEvent: id => openDetail(id) });
 const workflowUI = createWorkflowUI({ api, authenticated: () => state.authenticated, generation: () => sessionGeneration, active: () => state.view === 'workflow', openRuns: (id, runId) => { state.view = 'audit'; renderApp(); auditUI.openWorkflow(id, runId); }, escape, toast, formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()) });
-const dangerZoneUI = createDangerZoneUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, onSavingChange: setSettingsBusy, toast, onReset: async result => {
+const dangerZoneUI = createDangerZoneUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, onSavingChange: setSettingsBusy, toast, onReset: applyDataReset });
+const dataTransferUI = createDataTransferUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, confirmRestore: (job, onStarted) => dangerZoneUI.restore(job, onStarted), onRestored: applyDataReset, toast });
+async function applyDataReset(result) {
   if (result.target === 'system') { applyBranding(result.publicBranding); state.initialized = false; state.view = 'calendar'; endSession(); return; }
+  if (result.target === 'restore') { applyBranding(result.publicBranding); servicesUI.clear(); servicesSettingsLoaded = false; }
+  else dataTransferUI.clear();
   sessionGeneration++; syncRequest++; eventLoader.clear(); detailEvent = null; state.syncing = false; state.revision = -1;
   auditUI.clear(); logPolicyUI.clear(); logPolicySettingsLoaded = false;
-  if (result.target === 'workflows') workflowUI.clear();
+  if (['workflows', 'restore'].includes(result.target)) workflowUI.clear();
   for (const dialog of document.querySelectorAll('dialog')) dialog.close();
-  if (result.target === 'events') state.events = [];
+  if (['events', 'restore'].includes(result.target)) state.events = [];
   try { await loadEvents(false); } catch { /* The reset committed; show the normal connection notice if refresh fails. */ }
   if (state.authenticated) renderApp();
-} });
+}
 
 function brand() {
   return `<div class="brand"><img class="brand-mark" src="/favicon.svg" alt=""><div class="brand-copy"><div class="brand-name" title="${escape(branding.name)}">${escape(branding.name)}</div>${branding.subtitle ? `<div class="brand-caption" title="${escape(branding.subtitle)}">${escape(branding.subtitle)}</div>` : ''}</div></div>`;
@@ -441,6 +446,7 @@ function endSession() {
   servicesUI.clear();
   logPolicyUI.clear();
   dangerZoneUI.clear();
+  dataTransferUI.clear();
   auditUI.clear();
   workflowUI.clear();
   pendingAuditEvent = undefined;
