@@ -350,6 +350,57 @@ function fitCalendar() {
       Array.from(weeks.querySelectorAll('button')).find(button => Object.entries(focused).every(([key, value]) => button.dataset[key] === value))?.focus({ preventScroll: true });
     }
   }
+  updateCalendarNow(new Date());
+}
+
+function updateCalendarNow(now) {
+  const calendar = $('.calendar');
+  if (!calendar) return;
+  const today = dateKey(now);
+  const cell = calendar.querySelector(`.day-cell[data-date="${today}"]`);
+  const previous = calendar.querySelector('.day-cell.today');
+  if (previous && previous !== cell) {
+    previous.classList.remove('today');
+    previous.querySelector('.today-label')?.remove();
+    previous.querySelector('.calendar-now-line')?.remove();
+  }
+  if (!cell) return;
+  cell.classList.add('today');
+  let label = cell.querySelector('.today-label');
+  if (!label) {
+    label = document.createElement('span');
+    label.className = 'today-label';
+    cell.querySelector('.day-hit').append(label);
+  }
+  label.textContent = `현재 ${timeLabel(now)}`;
+  label.title = `오늘, ${label.textContent} (${timezone})`;
+  let line = cell.querySelector('.calendar-now-line');
+  if (!line) {
+    line = document.createElement('div');
+    line.className = 'calendar-now-line';
+    line.setAttribute('aria-hidden', 'true');
+    cell.append(line);
+  }
+  line.style.setProperty('--now-position', currentDayPosition(now));
+}
+
+function currentDayPosition(now) {
+  // Use the same civil-day boundaries as event fills, including DST changes.
+  const [start, end] = dayBounds(dateKey(now));
+  return `${(+now - start) / (end - start) * 100}%`;
+}
+
+function updateOverflowNow(now) {
+  const dialog = $('#overflow-dialog');
+  if (!dialog.open) return;
+  const isToday = dialog.dataset.date === dateKey(now);
+  const label = $('#overflow-now-text');
+  label.hidden = !isToday;
+  label.textContent = isToday ? ` · 현재 ${timeLabel(now)}` : '';
+  for (const line of dialog.querySelectorAll('.overflow-now-line')) {
+    line.hidden = !isToday;
+    if (isToday) line.style.setProperty('--now-position', currentDayPosition(now));
+  }
 }
 
 function renderEventTimeDay(event, day) {
@@ -478,9 +529,11 @@ function renderTimelineRows() {
 }
 
 function updateNow() {
+  const now = new Date();
+  updateCalendarNow(now);
+  updateOverflowNow(now);
   const line = $('#now-line');
   if (!line || !timelineStart) return;
-  const now = new Date();
   let dayIndex = -1;
   for (let index = 0; index < 7; index++) if (dateKey(now) === addDays(timelineStart, index)) dayIndex = index;
   line.hidden = dayIndex === -1;
@@ -595,8 +648,10 @@ function openOverflow(day) {
   const endpoint = value => value === null
     ? '<span>미정 <span class="infinity" aria-label="종료 시각 미정">∞</span></span>'
     : `<time datetime="${escape(value)}" title="${escape(formatDateTime(value))}">${dateKey(value) === selectedDate ? `당일 ${timeLabel(value)}` : formatDateTime(value)}</time>`;
-  $('#overflow-content').innerHTML = `<div class="dialog-heading"><div><p class="eyebrow">DAY RECORDS · ${events.length} EVENTS</p><h2 id="overflow-title">${dateParts(day).year}년 ${formatDay(day)}의 이벤트</h2><p class="overflow-context">${escape(timezone)} 기준</p></div><button class="icon-button" data-close="overflow-dialog" aria-label="닫기">×</button></div><div class="overflow-list">${events.map(event => `<button class="overflow-item ${event.category}" data-action="overflow-event" data-id="${event.id}" data-date="${selectedDate}"><span class="event-time-fill" style="--event-days:1" aria-hidden="true">${renderEventTimeDay(event, selectedDate)}</span><i class="dot ${event.category}"></i><span class="overflow-item-body"><strong>${escape(event.title)}</strong><small>${categories[event.category]} · ${escape(event.service || '전체 서비스')}</small><span class="overflow-times"><span class="overflow-time-label">시작</span> ${endpoint(event.start)}<span class="overflow-time-label">종료</span> ${endpoint(event.end)}</span></span>${icon('right')}</button>`).join('')}</div>`;
+  $('#overflow-content').innerHTML = `<div class="dialog-heading"><div><p class="eyebrow">DAY RECORDS · ${events.length} EVENTS</p><h2 id="overflow-title">${dateParts(day).year}년 ${formatDay(day)}의 이벤트</h2><p class="overflow-context">${escape(timezone)} 기준<span id="overflow-now-text" hidden></span></p></div><button class="icon-button" data-close="overflow-dialog" aria-label="닫기">×</button></div><div class="overflow-list">${events.map(event => `<button class="overflow-item ${event.category}" data-action="overflow-event" data-id="${event.id}" data-date="${selectedDate}"><span class="event-time-fill" style="--event-days:1" aria-hidden="true">${renderEventTimeDay(event, selectedDate)}</span><i class="dot ${event.category}"></i><span class="overflow-item-body"><strong>${escape(event.title)}</strong><small>${categories[event.category]} · ${escape(event.service || '전체 서비스')}</small><span class="overflow-times"><span class="overflow-time-label">시작</span> ${endpoint(event.start)}<span class="overflow-time-label">종료</span> ${endpoint(event.end)}</span></span>${icon('right')}<span class="overflow-now-line" aria-hidden="true" hidden></span></button>`).join('')}</div>`;
+  $('#overflow-dialog').dataset.date = selectedDate;
   $('#overflow-dialog').showModal();
+  updateOverflowNow(new Date());
 }
 
 async function loadEvents(render = true) {

@@ -686,10 +686,39 @@ svg.icon {
 }
 
 .today-label {
-  margin:9px 10px 0 0;
+  margin:8px 6px 0 0;
   font-size:9px;
-  color:var(--green);
-  font-weight:650
+  color:var(--red);
+  font-weight:650;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap
+}
+
+.calendar-now-line,.overflow-now-line {
+  position:absolute;
+  left:clamp(3px,var(--now-position),calc(100% - 3px));
+  width:2px;
+  background:var(--red);
+  transform:translateX(-50%);
+  z-index:3;
+  pointer-events:none
+}
+
+.calendar-now-line {
+  top:var(--calendar-event-top);
+  bottom:1px
+}
+
+.calendar-now-line::before,.overflow-now-line::before {
+  content:"";
+  position:absolute;
+  top:0;
+  left:50%;
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:inherit;
+  transform:translate(-50%,-50%)
 }
 
 .day-add {
@@ -795,7 +824,7 @@ svg.icon {
   background:var(--badge-active)
 }
 
-.event-badge>:not(.event-time-fill),.overflow-item>:not(.event-time-fill) {
+.event-badge>:not(.event-time-fill),.overflow-item>:not(.event-time-fill,.overflow-now-line) {
   position:relative
 }
 
@@ -1613,6 +1642,21 @@ svg.icon {
   margin:8px 0 0;
   font-size:11px;
   color:var(--muted)
+}
+
+#overflow-now-text {
+  color:var(--red);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap
+}
+
+.overflow-now-line {
+  top:0;
+  bottom:0
+}
+
+.overflow-now-line::before {
+  top:3px
 }
 
 .overflow-times {

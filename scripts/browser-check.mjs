@@ -100,6 +100,43 @@ async function selectMonth(year, month) {
   await evaluate(`(() => { const year = document.querySelector('#calendar-year'); year.value = '${year}'; year.dispatchEvent(new Event('change', { bubbles: true })); const month = document.querySelector('#calendar-month'); month.value = '${month - 1}'; month.dispatchEvent(new Event('change', { bubbles: true })); })()`);
 }
 
+async function setClock(instant, refresh = true) {
+  await evaluate(`window.testNow = Date.parse('${instant}'); ${refresh ? "document.dispatchEvent(new Event('visibilitychange'));" : ''}`);
+}
+
+async function checkCurrentTime(date, time, fraction, popup = false) {
+  const markers = await evaluate(`(() => {
+    const cell = document.querySelector('.day-cell.today');
+    const marker = cell?.querySelector('.calendar-now-line');
+    const label = cell?.querySelector('.today-label');
+    const dateBox = cell?.querySelector('.day-number').getBoundingClientRect();
+    const labelBox = label?.getBoundingClientRect();
+    const lines = ${popup} ? Array.from(document.querySelectorAll('.overflow-now-line:not([hidden])')) : (marker ? [marker] : []);
+    return { date: cell?.dataset.date, label: label?.textContent, count: document.querySelectorAll('.calendar-now-line').length,
+      labelFits: labelBox && labelBox.left >= dateBox.right && labelBox.right <= cell.getBoundingClientRect().right,
+      popupRows: document.querySelectorAll('.overflow-item').length, popupLabel: document.querySelector('#overflow-now-text')?.textContent,
+      lines: lines.map(line => {
+        const box = line.getBoundingClientRect(), parent = line.parentElement.getBoundingClientRect(), style = getComputedStyle(line);
+        return { x: box.left + box.width / 2 - parent.left - parseFloat(getComputedStyle(line.parentElement).borderLeftWidth), width: line.parentElement.clientWidth, height: box.height,
+          inBounds: box.left >= parent.left && box.right <= parent.right && box.top >= parent.top && box.bottom <= parent.bottom,
+          pointerEvents: style.pointerEvents, color: style.backgroundColor, expectedColor: getComputedStyle(document.documentElement).getPropertyValue('--red').trim() };
+      }) };
+  })()`);
+  assert.equal(markers.date, date);
+  assert.equal(markers.label, `현재 ${time}`);
+  assert.equal(markers.count, 1, 'exactly one calendar cell shows the current time');
+  assert.ok(markers.labelFits, 'the current time label must fit beside the date');
+  assert.equal(markers.lines.length, popup ? markers.popupRows : 1);
+  if (popup) assert.equal(markers.popupLabel, ` · 현재 ${time}`);
+  for (const line of markers.lines) {
+    assert.ok(Math.abs(line.x - fraction * line.width) < 3.5, JSON.stringify(line));
+    assert.ok(line.inBounds && line.height > 20, JSON.stringify(line));
+    assert.equal(line.pointerEvents, 'none', 'time indicators must allow clicks through');
+    const expected = line.expectedColor.match(/\w\w/g).map(value => parseInt(value, 16));
+    assert.equal(line.color, `rgb(${expected.join(', ')})`, 'markers use the red color for the active theme');
+  }
+}
+
 async function checkCalendarLayout({ weeks, fits, september = false }) {
   const layout = await evaluate(`(() => {
     const calendar = document.querySelector('.calendar');
@@ -137,7 +174,7 @@ async function checkCalendarLayout({ weeks, fits, september = false }) {
 }
 
 async function checkCalendarTimeFills() {
-  const fills = await evaluate(`Array.from(document.querySelectorAll('.event-time-day')).map(day => {
+  const fills = await evaluate(`Array.from(document.querySelectorAll('.calendar .event-time-day')).map(day => {
     const badge = day.closest('.event-badge');
     const cell = badge.closest('.calendar-week').querySelector('.day-cell[data-date="' + day.dataset.date + '"]');
     const active = day.querySelector('.event-time-active');
@@ -232,6 +269,14 @@ try {
   await command('Page.enable');
   await command('Emulation.setLocaleOverride', { locale: 'en-US' });
   await command('Emulation.setTimezoneOverride', { timezoneId: 'America/Los_Angeles' });
+  await command('Page.addScriptToEvaluateOnNewDocument', { source: `
+    const NativeDate = window.Date;
+    window.testNow = NativeDate.parse('2026-09-09T03:00:00Z');
+    window.Date = class extends NativeDate {
+      constructor(...args) { super(...(args.length ? args : [window.testNow])); }
+      static now() { return window.testNow; }
+    };
+  ` });
   await command('Network.enable');
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   await command('Page.navigate', { url: base });
@@ -307,6 +352,41 @@ try {
   await evaluate(`(() => { const year = document.querySelector('#calendar-year'); year.value = '2026'; year.dispatchEvent(new Event('change', { bubbles: true })); const month = document.querySelector('#calendar-month'); month.value = '8'; month.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await checkCalendarLayout({ weeks: 5, fits: true, september: true });
   await checkCalendarTimeFills();
+  await checkCurrentTime('2026-09-09', '12:00', 0.5);
+  await click(`document.querySelector('.day-cell.today .day-more')`);
+  await checkCurrentTime('2026-09-09', '12:00', 0.5, true);
+  await screenshot('current-time-popup-light');
+  await setClock('2026-09-09T09:00:00Z');
+  await checkCurrentTime('2026-09-09', '18:00', 0.75, true);
+  await setClock('2026-09-09T14:59:00Z');
+  await checkCurrentTime('2026-09-09', '23:59', 1439 / 1440, true);
+  // Let the real 15-second timer handle midnight with the popup still open.
+  await setClock('2026-09-09T15:00:00Z', false);
+  await until(() => evaluate(`document.querySelector('.day-cell.today')?.dataset.date === '2026-09-10'`), 'calendar midnight rollover', 20000);
+  await checkCurrentTime('2026-09-10', '00:00', 0);
+  assert.equal(await evaluate('document.querySelectorAll(".overflow-now-line:not([hidden])").length'), 0, 'yesterday popup loses its current time markers at midnight');
+  assert.equal(await evaluate('document.querySelector("#overflow-now-text").hidden'), true);
+  // Moving the clock back makes the still-open selected date become today again.
+  await setClock('2026-09-08T15:00:00Z');
+  await checkCurrentTime('2026-09-09', '00:00', 0, true);
+  await setClock('2026-09-07T15:00:00Z');
+  assert.equal(await evaluate('document.querySelectorAll(".overflow-now-line:not([hidden])").length'), 0, 'future popup dates have no current time markers');
+  await setClock('2026-09-09T03:00:00Z');
+  // Use an actual pointer exactly on a row's marker to check event navigation.
+  const popupPoint = await evaluate(`(() => { const line = document.querySelector('.overflow-now-line').getBoundingClientRect(); return { x: line.left + line.width / 2, y: line.top + line.height / 2 }; })()`);
+  await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...popupPoint, button: 'left', clickCount: 1 });
+  await command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...popupPoint, button: 'left', clickCount: 1 });
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").open'), false);
+  assert.equal(await evaluate('document.querySelector("#timeline-date-input").value'), '2026-09-09');
+  assert.equal(await evaluate('document.querySelector("#now-text").textContent'), '12:00');
+  await click(`document.querySelector('[data-view="calendar"]')`);
+  // Month rollover updates adjacent-month cells without changing the chosen month.
+  await setClock('2026-09-30T14:59:00Z');
+  await checkCurrentTime('2026-09-30', '23:59', 1439 / 1440);
+  await setClock('2026-09-30T15:00:00Z');
+  await checkCurrentTime('2026-10-01', '00:00', 0);
+  assert.equal(await evaluate('document.querySelector("#calendar-month").value'), '8');
+  await setClock('2026-09-09T03:00:00Z');
   for (const [year, month, weeks, first, last] of [
     [2026, 2, 4, '2026-02-01', '2026-02-28'],
     [2024, 2, 5, '2024-01-28', '2024-03-02'],
@@ -315,6 +395,7 @@ try {
   ]) {
     await selectMonth(year, month);
     await checkCalendarLayout({ weeks, fits: true });
+    assert.equal(await evaluate('document.querySelectorAll(".calendar-now-line").length'), 0, 'months without today have no current time marker');
     assert.equal(await evaluate('document.querySelector(".day-cell").dataset.date'), first);
     assert.equal(await evaluate('Array.from(document.querySelectorAll(".day-cell")).at(-1).dataset.date'), last);
   }
@@ -326,6 +407,7 @@ try {
     await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     await delay(300);
     const layout = await checkCalendarLayout({ weeks: 5, fits, september: true });
+    await checkCurrentTime('2026-09-09', '12:00', 0.5);
     densities.add(layout.lanes);
     await screenshot(`calendar-${width}x${height}`);
   }
@@ -340,6 +422,7 @@ try {
   await click(`document.querySelector('[data-action="theme-toggle"]')`);
   await checkCalendarLayout({ weeks: 5, fits: true, september: true });
   await screenshot('calendar-dark');
+  await checkCurrentTime('2026-09-09', '12:00', 0.5);
   await click(`document.querySelector('[data-action="theme-toggle"]')`);
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   await delay(300);
@@ -379,6 +462,7 @@ try {
     ['네트워크 점검', 21 / 24, 2 / 24]
   ];
   await checkOverflowTimeFills('2026-09-09', popupTimeFills);
+  await checkCurrentTime('2026-09-09', '12:00', 0.5, true);
   await screenshot('event-list-dark');
   await click(themeControl);
   await checkOverflowTimeFills('2026-09-09', popupTimeFills);
@@ -518,6 +602,7 @@ try {
   assert.equal(JSON.parse(await fs.readFile(brandingFile, 'utf8')).showSubtitle, false);
   await command('Page.reload');
   await waitFor('!!document.querySelector(".calendar")', 'saved branding after reload');
+  await checkCurrentTime('2026-09-09', '03:00', 3 / 24);
   assert.equal(await evaluate('document.querySelector(".brand-name").textContent'), '운영 <Ops> & UI');
   assert.equal(await evaluate('document.documentElement.dataset.theme'), 'dark');
   await click(`document.querySelector('[data-action="branding-settings"]')`);
@@ -538,6 +623,7 @@ try {
   await waitFor('!document.querySelector("#branding-dialog").open', 'custom timezone saved');
   assert.equal(JSON.parse(await fs.readFile(brandingFile, 'utf8')).timezone, 'Australia/Sydney');
   assert.ok(await evaluate('document.querySelector(".header .timezone-badge").textContent.includes("Australia/Sydney")'));
+  await checkCurrentTime('2026-09-09', '13:00', 13 / 24);
   await click(`document.querySelector('[data-action="branding-settings"]')`);
   await waitFor('!document.querySelector("#branding-fields").disabled', 'custom timezone reloaded');
   assert.equal(await evaluate('document.querySelector("#branding-form").elements.timezone.value'), 'custom');
@@ -603,6 +689,7 @@ try {
   await checkCalendarLayout({ weeks: 5, fits: false, september: true });
   await evaluate('document.querySelector(".calendar-scroll").scrollLeft = 0');
   await screenshot('mobile-calendar');
+  await checkCurrentTime('2026-09-09', '12:00', 0.5);
   await click(`document.querySelector('[data-action="branding-settings"]')`);
   await waitFor('!document.querySelector("#branding-fields").disabled', 'mobile branding settings');
   assert.ok(await evaluate('document.querySelector("#branding-dialog").scrollWidth <= document.querySelector("#branding-dialog").clientWidth'));
@@ -615,9 +702,11 @@ try {
   assert.ok(await evaluate('document.querySelector("#overflow-dialog").scrollWidth <= document.querySelector("#overflow-dialog").clientWidth'), 'event dates must fit the mobile popup');
   await screenshot('mobile-event-list');
   await checkOverflowTimeFills('2026-09-09', popupTimeFills);
+  await checkCurrentTime('2026-09-09', '12:00', 0.5, true);
   await click(`document.querySelector('[data-close="overflow-dialog"]')`);
   await click(`document.querySelector('.day-cell[data-date="2026-09-10"] .day-more')`);
   await checkOverflowTimeFills('2026-09-10', [['데이터베이스 정기 점검', 0, 11 / 24], ['인증 서비스 불안정', 0, 1]]);
+  assert.equal(await evaluate('document.querySelectorAll(".overflow-now-line:not([hidden])").length'), 0);
   await click(`document.querySelector('[data-close="overflow-dialog"]')`);
   await click(`document.querySelector('[data-action="logout"]')`);
   await waitFor('!!document.querySelector("#auth-form")', 'logout');
