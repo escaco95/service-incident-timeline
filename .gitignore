@@ -1,0 +1,6 @@
+/data/
+/.tmp/
+/.env
+/branding.json
+*.log
+node_modules/

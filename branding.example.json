@@ -1,0 +1,7 @@
+{
+  "name": "Service Timeline",
+  "subtitle": "서비스 운영 기록",
+  "showSubtitle": true,
+  "defaultTheme": "light",
+  "timezone": "UTC"
+}

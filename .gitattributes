@@ -1,0 +1,2 @@
+# Keep text files consistent across Windows development and Linux deployment.
+* text=auto eol=lf

@@ -1,0 +1,49 @@
+name: Deploy to server
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-service-timeline
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 10
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST || secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      DEPLOY_SERVICE: ${{ vars.DEPLOY_SERVICE }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      SOURCE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # This example uses only Git/Bash/OpenSSH already installed on the runner.
+      # No marketplace actions, package installation or build is required.
+      - name: Fetch source and deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
+          : "${SOURCE_TOKEN:?SOURCE_TOKEN is required}"
+          work=$(mktemp -d "${RUNNER_TEMP%/}/service-timeline-deploy.XXXXXX")
+          cleanup() {
+            case "$work" in "${RUNNER_TEMP%/}"/service-timeline-deploy.*) rm -rf -- "$work" ;; esac
+          }
+          trap cleanup EXIT
+          basic_auth=$(printf 'x-access-token:%s' "$SOURCE_TOKEN" | base64 | tr -d '\n')
+          printf '::add-mask::%s\n' "$basic_auth"
+          git init -q "$work/source"
+          git -C "$work/source" remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="Authorization: Basic $basic_auth" \
+            git -C "$work/source" fetch --quiet --depth=1 origin "$GITHUB_SHA"
+          unset basic_auth SOURCE_TOKEN
+          git -C "$work/source" checkout --quiet --detach FETCH_HEAD
+          bash "$work/source/scripts/deploy.sh" "$work"

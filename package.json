@@ -1,0 +1,9 @@
+{
+  "name": "service-incident-timeline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "빌드와 외부 패키지 없이 실행하는 암호화된 서비스 이벤트 캘린더",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": { "start": "node server.mjs", "test": "node --test test/*.test.mjs" }
+}

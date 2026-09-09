@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko" data-default-theme="{{DEFAULT_THEME}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#175c4b">
+  <meta name="description" content="서비스의 점검, 불안정, 장애를 한눈에 기록하고 살펴보세요.">
+  <title>{{APP_TITLE}}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 이동</a>
+  <div id="root"><div class="boot-screen"><img src="/favicon.svg" width="44" height="44" alt=""><p>서비스 기록을 준비하고 있습니다.</p></div></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="event-dialog" class="dialog event-dialog" aria-labelledby="event-dialog-title">
+    <form id="event-form">
+      <div class="dialog-heading"><div><p class="eyebrow">EVENT RECORD</p><h2 id="event-dialog-title">이벤트 추가</h2></div><button type="button" class="icon-button" data-close="event-dialog" aria-label="닫기">×</button></div>
+      <label class="field">이벤트 제목 <span class="required">*</span><input name="title" required maxlength="120" placeholder="어떤 일이 있었나요?" autocomplete="off"></label>
+      <div class="field-row"><label class="field">유형<select name="category"><option value="maintenance">점검</option><option value="instability">불안정</option><option value="incident">장애</option></select></label><label class="field">서비스 <span class="optional">선택</span><input name="service" maxlength="80" placeholder="예: 결제 API" autocomplete="off"></label></div>
+      <div class="field-row">
+        <fieldset class="field datetime-field"><legend>시작 시각 <span class="required">*</span></legend>
+          <input name="startDate" type="date" min="1900-01-01" max="9998-12-31" aria-label="시작 날짜" required>
+          <div class="time-controls"><select name="startHour" aria-label="시작 시 (00~23)" required></select><span aria-hidden="true">:</span><select name="startMinute" aria-label="시작 분 (00~59)" required></select></div>
+        </fieldset>
+        <fieldset class="field datetime-field" id="end-fields"><legend>종료 시각</legend>
+          <input name="endDate" type="date" min="1900-01-01" max="9998-12-31" aria-label="종료 날짜" required>
+          <div class="time-controls"><select name="endHour" aria-label="종료 시 (00~23)" required></select><span aria-hidden="true">:</span><select name="endMinute" aria-label="종료 분 (00~59)" required></select></div>
+        </fieldset>
+      </div>
+      <label class="check-field"><input name="openEnded" type="checkbox"><span>종료 시각 미정 <span class="infinity">∞</span></span></label>
+      <label class="field">상세 내용 <span class="optional">선택</span><textarea name="description" rows="4" maxlength="4000" placeholder="영향 범위, 조치 내용, 참고할 사항을 기록하세요."></textarea></label>
+      <p class="form-hint" id="event-timezone"></p>
+      <p class="form-error" id="event-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="event-dialog">취소</button><button class="button primary" id="event-save" type="submit">이벤트 저장</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="branding-dialog" class="dialog branding-dialog" aria-labelledby="branding-title">
+    <form id="branding-form">
+      <div class="dialog-heading"><h2 id="branding-title">브랜딩 설정</h2><button type="button" class="icon-button" data-close="branding-dialog" aria-label="닫기">×</button></div>
+      <p class="branding-description">모든 사용자가 함께 사용하는 이름과 표시 기본값입니다.</p>
+      <p id="branding-loading" class="form-hint" role="status" hidden>설정을 불러오고 있습니다…</p>
+      <fieldset id="branding-fields" class="branding-fields" disabled>
+        <label class="field">서비스 이름 <span class="required">*</span><input name="name" required maxlength="64" autocomplete="off" placeholder="예: Payment Timeline"></label>
+        <label class="field">부제 <span class="optional">선택</span><input name="subtitle" maxlength="80" autocomplete="off" placeholder="예: 결제 서비스 운영 기록"></label>
+        <label class="check-field"><input name="showSubtitle" type="checkbox"><span>부제 표시</span></label>
+        <div class="field-row">
+          <label class="field">기본 테마<select name="defaultTheme"><option value="light">라이트</option><option value="dark">다크</option></select></label>
+          <label class="field">표시 시간대<select name="timezone" required><option value="UTC">UTC</option><option value="Asia/Seoul">Asia/Seoul</option><option value="Asia/Tokyo">Asia/Tokyo</option><option value="America/New_York">America/New_York</option><option value="America/Los_Angeles">America/Los_Angeles</option><option value="Europe/London">Europe/London</option><option value="custom">직접 입력…</option></select></label>
+        </div>
+        <label class="field" id="branding-custom-timezone" hidden>시간대 직접 입력<input name="customTimezone" maxlength="100" autocomplete="off" spellcheck="false" placeholder="예: Australia/Sydney" disabled></label>
+        <p class="form-hint">기본 테마는 개인 테마를 선택하지 않은 사용자에게 적용됩니다. 시간대를 바꾸면 이벤트의 표시·입력 시각도 함께 바뀝니다.</p>
+      </fieldset>
+      <p id="branding-error" class="form-error" role="alert" hidden></p>
+      <button type="button" id="branding-reload" class="button secondary" hidden>최신 설정 불러오기</button>
+      <div class="dialog-actions"><button class="button secondary" type="button" data-close="branding-dialog">취소</button><button class="button primary" id="branding-save" type="submit" disabled>설정 저장</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="detail-dialog" class="dialog detail-dialog" aria-labelledby="detail-title"><div id="detail-content"></div></dialog>
+  <dialog id="overflow-dialog" class="dialog overflow-dialog" aria-labelledby="overflow-title"><div id="overflow-content"></div></dialog>
+  <dialog id="delete-dialog" class="dialog delete-dialog" aria-labelledby="delete-title">
+    <div class="dialog-heading"><h2 id="delete-title">이벤트를 삭제할까요?</h2><button class="icon-button" data-close="delete-dialog" aria-label="닫기">×</button></div>
+    <p id="delete-description" class="delete-description"></p><p class="muted">삭제한 이벤트는 화면에서 복구할 수 없습니다.</p>
+    <p class="form-error" id="delete-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button class="button secondary" data-close="delete-dialog">취소</button><button class="button danger" id="delete-confirm">이벤트 삭제</button></div>
+  </dialog>
+  <noscript>이 서비스는 JavaScript가 활성화된 브라우저에서 사용할 수 있습니다.</noscript>
+</body>
+</html>

@@ -1,0 +1,23 @@
+[Unit]
+Description=Service Timeline
+After=network.target
+
+[Service]
+Type=simple
+User=service-timeline
+Group=service-timeline
+WorkingDirectory=/srv/service-timeline/current
+EnvironmentFile=/etc/service-timeline.env
+ExecStart=/usr/bin/node /srv/service-timeline/current/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/service-timeline
+
+[Install]
+WantedBy=multi-user.target
