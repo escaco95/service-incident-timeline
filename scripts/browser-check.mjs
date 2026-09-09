@@ -56,8 +56,14 @@ async function screenshot(name, full = false) {
 }
 async function click(expression) { await evaluate(`(${expression}).click()`); }
 
+async function pointerClick(expression) {
+  const point = await evaluate(`(() => { const rect = (${expression}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
+  await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+  await command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+}
+
 async function pressKey(key, keyCode) {
-  await command('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code: key, windowsVirtualKeyCode: keyCode });
+  await command('Input.dispatchKeyEvent', { type: key === 'Enter' ? 'keyDown' : 'rawKeyDown', key, code: key, windowsVirtualKeyCode: keyCode, ...(key === 'Enter' ? { text: '\r', unmodifiedText: '\r' } : {}) });
   await command('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, windowsVirtualKeyCode: keyCode });
 }
 
@@ -437,17 +443,65 @@ try {
   await checkCalendarTimeFills();
   assert.equal(await fs.readFile(path.join(runDir, 'data', 'store.json'), 'utf8'), encryptedBeforeTheme);
   assert.equal(mutations.length, mutationsBeforeTheme);
+  // A date with no overflow remains reachable through its number, without opening the editor.
+  assert.equal(await evaluate(`!!document.querySelector('.day-cell[data-date="2026-09-03"] .day-more')`), false);
+  await pointerClick(`document.querySelector('.day-cell[data-date="2026-09-03"] .day-number')`);
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").open'), true);
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").dataset.date'), '2026-09-03');
+  assert.equal(await evaluate('document.querySelectorAll(".overflow-item").length'), 1);
+  assert.equal(await evaluate('!!document.querySelector(".overflow-item.highlighted")'), false);
+  assert.equal(await evaluate('document.querySelector("#event-dialog").open'), false);
+  await pressKey('Escape', 27);
+  assert.equal(await evaluate('document.activeElement.classList.contains("day-number")'), true);
+  // Blank cells still add an event; their number opens a useful empty list.
+  await pointerClick(`document.querySelector('.day-cell[data-date="2026-09-04"] .day-hit')`);
+  assert.equal(await evaluate('document.querySelector("#event-dialog").open'), true);
+  assert.equal(await evaluate('document.querySelector("#event-form").elements.startDate.value'), '2026-09-04');
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").open'), false);
+  await click(`document.querySelector('[data-close="event-dialog"]')`);
+  await pointerClick(`document.querySelector('.day-cell[data-date="2026-09-04"] .day-number')`);
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").open'), true);
+  assert.equal(await evaluate('document.querySelector(".overflow-empty p").textContent'), '표시할 이벤트가 없습니다.');
+  await screenshot('event-list-empty');
+  await click(`document.querySelector('.overflow-empty [data-action="add-on-day"]')`);
+  assert.equal(await evaluate('document.querySelectorAll("dialog[open]").length'), 1);
+  assert.equal(await evaluate('document.querySelector("#event-dialog").open'), true);
+  assert.equal(await evaluate('document.querySelector("#event-form").elements.startDate.value'), '2026-09-04');
+  await click(`document.querySelector('[data-close="event-dialog"]')`);
+  // Keyboard activation opens the first day of this visible multi-day segment.
+  await evaluate(`Array.from(document.querySelectorAll('.event-badge')).find(button => button.textContent.includes('데이터베이스')).focus()`);
+  assert.equal(await evaluate('document.activeElement.classList.contains("event-badge")'), true);
+  await pressKey('Enter', 13);
+  await waitFor('document.querySelector("#overflow-dialog").open', 'keyboard opens day list');
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").dataset.date'), '2026-09-07');
+  assert.equal(await evaluate('document.activeElement.classList.contains("highlighted")'), true);
+  assert.ok(await evaluate('document.activeElement.textContent.includes("데이터베이스")'));
+  await pressKey('Escape', 27);
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").open'), false);
+  assert.equal(await evaluate('document.activeElement.classList.contains("event-badge")'), true);
   // Click the middle day of a multi-day badge with an actual pointer event.
   const point = await evaluate(`(() => { const day = document.querySelector('.day-cell[data-date="2026-09-09"]'); const week = day.closest('.calendar-week'); const badge = Array.from(week.querySelectorAll('.event-badge')).find(button => button.textContent.includes('데이터베이스')); const cell = day.getBoundingClientRect(); const bar = badge.getBoundingClientRect(); return { x: cell.left + cell.width / 2, y: bar.top + bar.height / 2 }; })()`);
   await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
   await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
-  await waitFor('!!document.querySelector(".timeline-row.highlighted")', 'multi-day pointer navigation');
+  await waitFor('document.querySelector("#overflow-dialog").open', 'multi-day pointer opens day list');
+  assert.equal(await evaluate('!!document.querySelector(".calendar")'), true, 'opening a popup keeps the calendar view');
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").dataset.date'), '2026-09-09');
+  assert.equal(await evaluate('document.querySelectorAll(".overflow-item.highlighted").length'), 1);
+  assert.equal(await evaluate('document.activeElement.matches(".overflow-item.highlighted")'), true);
+  assert.ok(await evaluate('document.activeElement.textContent.includes("데이터베이스")'));
+  await screenshot('event-list-selected-dark');
+  await click(themeControl);
+  await screenshot('event-list-selected-light');
+  await click(themeControl);
+  await pressKey('Enter', 13);
+  await waitFor('!!document.querySelector(".timeline-row.highlighted")', 'popup selection navigates to timeline');
   assert.equal(await evaluate('document.querySelector("#timeline-date-input").value'), '2026-09-09');
   assert.ok(await evaluate('document.querySelector(".timeline-row.highlighted").textContent.includes("데이터베이스")'));
   await click(`document.querySelector('[data-action="view"][data-view="calendar"]')`);
   await selectMonth(2026, 9); // The calendar selection is now Sep 1; open the Sep 9 popup.
   await click(`document.querySelector('.day-cell[data-date="2026-09-09"] .day-more')`);
   assert.equal(await evaluate('document.querySelectorAll(".overflow-item").length'), 5);
+  assert.equal(await evaluate('!!document.querySelector(".overflow-item.highlighted")'), false, 'More opens a fresh list without the previous highlight');
   const popupTimes = await evaluate(`Object.fromEntries(Array.from(document.querySelectorAll('.overflow-item')).map(button => [button.querySelector('strong').textContent, Array.from(button.querySelector('.overflow-times').children).map(child => child.textContent)]))`);
   assert.deepEqual(popupTimes['데이터베이스 정기 점검'], ['시작', '2026.09.07 22:00', '종료', '2026.09.10 11:00']);
   assert.deepEqual(popupTimes['결제 API 응답 지연'], ['시작', '당일 10:20', '종료', '당일 13:45']);
@@ -718,7 +772,7 @@ try {
   await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(password)}; form.requestSubmit(); })()`);
   await waitFor('!!document.querySelector(".calendar")', 'login again');
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('Browser checks passed: branding, default theme, browser preference persistence, cross-window sync, blocked storage, theme changes without server writes, setup, session, calendar overflow, timeline highlight, bidirectional infinite scroll, manual CRUD, mobile layout, XSS rendering, logout and login.');
+  console.log('Browser checks passed: branding, default theme, browser preference persistence, cross-window sync, blocked storage, theme changes without server writes, setup, session, calendar date and badge popups, empty-day creation, keyboard and pointer navigation, timeline highlight, bidirectional infinite scroll, manual CRUD, mobile layout, XSS rendering, logout and login.');
   console.log(`Screenshots: ${output}`);
 } catch (error) {
   if (socket?.readyState === WebSocket.OPEN) await screenshot('failure').catch(() => {});

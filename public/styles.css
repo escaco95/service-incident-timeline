@@ -660,12 +660,19 @@ svg.icon {
   text-align:left;
   display:flex;
   align-items:flex-start;
-  justify-content:space-between;
+  justify-content:flex-end;
   cursor:pointer
 }
 
 .day-number {
-  margin:3px 0 0 8px;
+  position:absolute;
+  top:3px;
+  left:8px;
+  z-index:2;
+  margin:0;
+  padding:0;
+  border:0;
+  background:transparent;
   min-width:24px;
   height:24px;
   display:flex;
@@ -674,6 +681,10 @@ svg.icon {
   border-radius:7px;
   font-size:12px;
   font-weight:600
+}
+
+.day-number:hover {
+  box-shadow:inset 0 0 0 1px currentColor
 }
 
 .outside .day-number {
@@ -1630,6 +1641,38 @@ svg.icon {
 
 .overflow-item:hover {
   border-color:#a6bba0
+}
+
+.overflow-item:focus-visible {
+  outline-offset:-3px
+}
+
+.overflow-item.highlighted::after {
+  content:"";
+  position:absolute;
+  inset:0;
+  border:2px solid currentColor;
+  border-radius:inherit;
+  pointer-events:none;
+  z-index:2
+}
+
+.overflow-selection {
+  display:block;
+  margin-bottom:6px;
+  font-size:10px;
+  font-weight:700
+}
+
+.overflow-empty {
+  padding:20px 0;
+  text-align:center;
+  color:var(--muted);
+  font-size:13px
+}
+
+.overflow-empty p {
+  margin:0 0 16px
 }
 
 .overflow-item-body {
