@@ -1,0 +1,349 @@
+{
+  "format": "service-incident-timeline/workflow",
+  "formatVersion": 1,
+  "definition": {
+    "name": "서비스 상태 조회·적용·검증 (가상 예제)",
+    "nodes": [
+      {
+        "id": "trigger",
+        "type": "service-state",
+        "name": "trigger",
+        "x": 36,
+        "y": 36,
+        "config": {
+          "service": ""
+        }
+      },
+      {
+        "id": "service",
+        "type": "condition",
+        "name": "service",
+        "x": 342,
+        "y": 36,
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "resource-a",
+          "valueSource": "literal",
+          "rules": ""
+        }
+      },
+      {
+        "id": "severity",
+        "type": "condition",
+        "name": "severity",
+        "x": 648,
+        "y": 36,
+        "config": {
+          "field": "",
+          "operator": "equals",
+          "value": "",
+          "valueSource": "literal",
+          "rules": "{\"any\":[{\"field\":\"trigger.severity\",\"operator\":\"equals\",\"value\":\"\\\"\\\"\"},{\"field\":\"trigger.severity\",\"operator\":\"equals\",\"value\":\"warning\"},{\"field\":\"trigger.severity\",\"operator\":\"equals\",\"value\":\"incident\"}]}"
+        }
+      },
+      {
+        "id": "read",
+        "type": "http",
+        "name": "read",
+        "x": 954,
+        "y": 36,
+        "config": {
+          "method": "GET",
+          "url": "http://127.0.0.1:8788/resources",
+          "headers": "{\"Content-Type\":\"application/json\"}",
+          "body": "",
+          "onError": "stop",
+          "intent": "read",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        }
+      },
+      {
+        "id": "find",
+        "type": "find",
+        "name": "find",
+        "x": 36,
+        "y": 234,
+        "config": {
+          "source": "response.body.items",
+          "field": "name",
+          "value": "trigger.service",
+          "valueSource": "path"
+        }
+      },
+      {
+        "id": "same",
+        "type": "condition",
+        "name": "same",
+        "x": 342,
+        "y": 234,
+        "config": {
+          "field": "nodes.find.item.state",
+          "operator": "equals",
+          "value": "trigger.severity",
+          "valueSource": "path",
+          "rules": ""
+        }
+      },
+      {
+        "id": "clock",
+        "type": "datetime",
+        "name": "clock",
+        "x": 648,
+        "y": 234,
+        "config": {
+          "source": "now",
+          "timezone": "Asia/Seoul",
+          "format": "local"
+        }
+      },
+      {
+        "id": "change",
+        "type": "http",
+        "name": "change",
+        "x": 954,
+        "y": 234,
+        "config": {
+          "method": "POST",
+          "url": "http://127.0.0.1:8788/resources/{{nodes.find.item.id}}",
+          "headers": "{\"Content-Type\":\"application/json\"}",
+          "body": "{\"state\":{\"$path\":\"trigger.severity\"},\"requestedAt\":\"{{nodes.clock.value}}\"}",
+          "onError": "stop",
+          "intent": "change",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        }
+      },
+      {
+        "id": "accepted",
+        "type": "condition",
+        "name": "accepted",
+        "x": 36,
+        "y": 432,
+        "config": {
+          "field": "response.status",
+          "operator": "equals",
+          "value": "200",
+          "valueSource": "literal",
+          "rules": ""
+        }
+      },
+      {
+        "id": "verify",
+        "type": "http",
+        "name": "verify",
+        "x": 342,
+        "y": 432,
+        "config": {
+          "method": "GET",
+          "url": "http://127.0.0.1:8788/resources",
+          "headers": "{\"Content-Type\":\"application/json\"}",
+          "body": "",
+          "onError": "stop",
+          "intent": "read",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        }
+      },
+      {
+        "id": "findAfter",
+        "type": "find",
+        "name": "findAfter",
+        "x": 648,
+        "y": 432,
+        "config": {
+          "source": "response.body.items",
+          "field": "name",
+          "value": "trigger.service",
+          "valueSource": "path"
+        }
+      },
+      {
+        "id": "verified",
+        "type": "condition",
+        "name": "verified",
+        "x": 954,
+        "y": 432,
+        "config": {
+          "field": "",
+          "operator": "equals",
+          "value": "",
+          "valueSource": "literal",
+          "rules": "{\"all\":[{\"field\":\"nodes.findAfter.item.state\",\"operator\":\"equals\",\"value\":\"trigger.severity\",\"valueSource\":\"path\"},{\"field\":\"nodes.findAfter.item.id\",\"operator\":\"equals\",\"value\":\"nodes.find.item.id\",\"valueSource\":\"path\"}]}"
+        }
+      },
+      {
+        "id": "done",
+        "type": "finish",
+        "name": "done",
+        "x": 36,
+        "y": 630,
+        "config": {
+          "result": "success",
+          "message": "현재 외부 상태를 확인했습니다."
+        }
+      },
+      {
+        "id": "review",
+        "type": "finish",
+        "name": "review",
+        "x": 342,
+        "y": 630,
+        "config": {
+          "result": "review",
+          "message": "변경을 반복하지 말고 외부 처리 결과를 확인하세요."
+        }
+      },
+      {
+        "id": "skip",
+        "type": "finish",
+        "name": "skip",
+        "x": 648,
+        "y": 630,
+        "config": {
+          "result": "skipped",
+          "message": "매핑하지 않은 서비스입니다."
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "trigger-next-service",
+        "from": "trigger",
+        "to": "service",
+        "port": "next"
+      },
+      {
+        "id": "service-true-severity",
+        "from": "service",
+        "to": "severity",
+        "port": "true"
+      },
+      {
+        "id": "service-false-skip",
+        "from": "service",
+        "to": "skip",
+        "port": "false"
+      },
+      {
+        "id": "severity-true-read",
+        "from": "severity",
+        "to": "read",
+        "port": "true"
+      },
+      {
+        "id": "severity-false-review",
+        "from": "severity",
+        "to": "review",
+        "port": "false"
+      },
+      {
+        "id": "read-next-find",
+        "from": "read",
+        "to": "find",
+        "port": "next"
+      },
+      {
+        "id": "find-one-same",
+        "from": "find",
+        "to": "same",
+        "port": "one"
+      },
+      {
+        "id": "find-zero-review",
+        "from": "find",
+        "to": "review",
+        "port": "zero"
+      },
+      {
+        "id": "find-many-review",
+        "from": "find",
+        "to": "review",
+        "port": "many"
+      },
+      {
+        "id": "same-true-done",
+        "from": "same",
+        "to": "done",
+        "port": "true"
+      },
+      {
+        "id": "same-false-clock",
+        "from": "same",
+        "to": "clock",
+        "port": "false"
+      },
+      {
+        "id": "clock-next-change",
+        "from": "clock",
+        "to": "change",
+        "port": "next"
+      },
+      {
+        "id": "change-next-accepted",
+        "from": "change",
+        "to": "accepted",
+        "port": "next"
+      },
+      {
+        "id": "accepted-true-verify",
+        "from": "accepted",
+        "to": "verify",
+        "port": "true"
+      },
+      {
+        "id": "accepted-false-review",
+        "from": "accepted",
+        "to": "review",
+        "port": "false"
+      },
+      {
+        "id": "verify-next-findAfter",
+        "from": "verify",
+        "to": "findAfter",
+        "port": "next"
+      },
+      {
+        "id": "findAfter-one-verified",
+        "from": "findAfter",
+        "to": "verified",
+        "port": "one"
+      },
+      {
+        "id": "findAfter-zero-review",
+        "from": "findAfter",
+        "to": "review",
+        "port": "zero"
+      },
+      {
+        "id": "findAfter-many-review",
+        "from": "findAfter",
+        "to": "review",
+        "port": "many"
+      },
+      {
+        "id": "verified-true-done",
+        "from": "verified",
+        "to": "done",
+        "port": "true"
+      },
+      {
+        "id": "verified-false-review",
+        "from": "verified",
+        "to": "review",
+        "port": "false"
+      }
+    ]
+  },
+  "requiredSecrets": []
+}

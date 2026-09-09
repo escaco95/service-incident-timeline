@@ -11,7 +11,7 @@ import { validateDefinition, cronSlot, parseCron, bodyTemplate, template, condit
 
 const node = (id, type, config = {}) => ({ id, type, name: id, x: 36, y: 36, config });
 const edge = (from, to, port = 'next') => ({ id: `${from}-${port}-${to}`, from, to, port });
-const definition = (type = 'start', url = 'http://127.0.0.1:1') => ({ name: '실제 워크플로우', nodes: [node('trigger', type, type === 'cron' ? { expression: '* * * * *', timezone: 'Asia/Seoul' } : { service: '' }), node('http', 'http', { method: 'POST', url, headers: '{"Content-Type":"application/json","Authorization":"Bearer {{secrets.ACCESS}}"}', body: '{"title":"{{event.title}}"}', timeoutMs: 1000, retries: 0, onError: 'stop' }), node('condition', 'condition', { field: 'response.status', operator: 'gte', value: '400' }), node('success', 'finish', { result: 'success', message: '작성자가 허용한 응답' }), node('failure', 'finish', { result: 'failure', message: '작성자가 거부한 응답' })], edges: [edge('trigger', 'http'), edge('http', 'condition'), edge('condition', 'success', 'true'), edge('condition', 'failure', 'false')] });
+const definition = (type = 'start', url = 'http://127.0.0.1:1') => ({ name: '실제 워크플로우', nodes: [node('trigger', type, type === 'cron' ? { expression: '* * * * *', timezone: 'Asia/Seoul' } : { service: '' }), node('http', 'http', { method: 'POST', url, intent: 'read', headers: '{"Content-Type":"application/json","Authorization":"Bearer {{secrets.ACCESS}}"}', body: '{"title":"{{event.title}}"}', timeoutMs: 1000, retries: 0, onError: 'stop' }), node('condition', 'condition', { field: 'response.status', operator: 'gte', value: '400' }), node('success', 'finish', { result: 'success', message: '작성자가 허용한 응답' }), node('failure', 'finish', { result: 'failure', message: '작성자가 거부한 응답' })], edges: [edge('trigger', 'http'), edge('http', 'condition'), edge('condition', 'success', 'true'), edge('condition', 'failure', 'false')] });
 const minimal = (type = 'start') => ({ name: `${type} 일정`, nodes: [node('trigger', type, type === 'cron' ? { expression: '* * * * *', timezone: 'Asia/Seoul' } : { service: '' }), node('finish', 'finish', { result: 'success', message: '' })], edges: [edge('trigger', 'finish')] });
 
 async function fixture(t, extra = {}) {
@@ -26,7 +26,7 @@ async function fixture(t, extra = {}) {
 async function settle(app, id) {
   await app.workflowEngine.tick();
   for (let i = 0; i < 200; i++) { const run = await app.workflows.readRun(id); if (['success', 'failure', 'canceled', 'interrupted'].includes(run.status)) return run; await delay(10); }
-  throw Error('Run did not finish');
+  throw Error('Run did not finish: ' + JSON.stringify({ run: await app.workflows.readRun(id), engine: app.workflowEngine.status() }));
 }
 async function seedEvent(app, extra = {}) {
   return (await app.vault.add({ title: '제목 "인용"\n다음 줄', description: '', service: '', services: [], category: 'maintenance', start: '2026-09-10T00:00:10.000Z', end: '2026-09-10T00:00:20.000Z', ...extra })).event;

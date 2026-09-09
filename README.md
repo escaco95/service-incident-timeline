@@ -249,3 +249,7 @@ test/                  Node.js 기본 테스트 러너
 scripts/               배포와 선택적 브라우저 검증
 docs/                  화면 명세·서버 배포 안내
 ```
+
+### 워크플로우 JSON 작성
+
+[JSON 작성·가상 예제·사내 연동 안내](docs/workflow-authoring.md)를 참고하세요. 100개 노드 예산, 파일 가져오기·다운로드, 서비스 유효 상태 변경, 목록 검색·시각 변환·복합 조건과 서비스별 실행 제어를 지원합니다. `node scripts/workflow-validate.mjs examples/workflows/service-state-http.json`으로 실행 없이 파일을 검증할 수 있습니다.

@@ -31,3 +31,7 @@
 `node --test test/*.test.mjs`는 암호화·인증·동시 쓰기·충돌·날짜·브랜딩·서비스·지원하지 않는 schema 보존·감사 이력·폐기 API를 검증한다. `node scripts/browser-check.mjs`는 설치된 Chromium 브라우저와 임시 데이터로 캘린더·타임라인·수기 편집·설정·감사 조회·모바일·XSS 렌더링·세션을 검증한다. `node --test test/workflows.test.mjs`와 `node scripts/workflow-browser-check.mjs`는 저장·예약·조건·HTTP·비밀 가림·취소·재시작·이력·재실행과 편집 화면을 검증한다. HTTP 통합 테스트는 로컬 서버만 호출한다.
 
 시작·종료는 입력한 시각에 실행하고 지난 시각은 소급하지 않는 기준으로 확정했다. HTTP 응답에 따른 전체 성공·실패는 작성자가 조건과 종료 노드로 정의한다. [워크플로우 사용 안내](workflow-transition-plan.md)에 실제 구현과 제한을 정리했다.
+
+## JSON 작성과 서비스 상태 트리거
+
+워크플로우당 100개 노드, JSON 입출력·CLI 검증, 서비스 상태 변경·목록 검색·날짜 시각 노드, 경로 비교·복합 조건, 서비스별 직렬화·불명 결과 보류·수동 해소를 제공한다. [작성·연동 안내](workflow-authoring.md), `examples/workflows/service-state-http.json`, `scripts/workflow-demo.mjs`를 인계 기준으로 사용한다. Windows 일시 파일 교체 오류는 `lib/file-replace.mjs`의 제한된 재시도를 사용한다. 새 기능의 저장·재시작·UI·예제 검증은 안내의 명령을 따른다.

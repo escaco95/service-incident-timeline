@@ -1,5 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
+import { importWorkflow, exportWorkflow, fileSchema } from './lib/workflow-file.mjs';
+import { LIMITS } from './public/workflow-spec.js';
 import { Workflows } from './lib/workflows.mjs';
 import { WorkflowEngine } from './lib/workflow-engine.mjs';
 import { LogMaintenance } from './lib/log-maintenance.mjs';
@@ -22,6 +24,8 @@ const ASSETS = new Map([
   ['/audit-ui.js', ['audit-ui.js', 'text/javascript; charset=utf-8']],
   ['/event-loader.js', ['event-loader.js', 'text/javascript; charset=utf-8']],
   ['/audit.css', ['audit.css', 'text/css; charset=utf-8']],
+  ['/workflow-spec.js', ['workflow-spec.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-file-ui.js', ['workflow-file-ui.js', 'text/javascript; charset=utf-8']],
   ['/workflow-ui.js', ['workflow-ui.js', 'text/javascript; charset=utf-8']],
   ['/workflow.css', ['workflow.css', 'text/css; charset=utf-8']],
   ['/theme.js', ['theme.js', 'text/javascript; charset=utf-8']],
@@ -92,13 +96,13 @@ export async function createApp(options = {}) {
     res.setHeader('Set-Cookie', `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${cookieSecure ? '; Secure' : ''}`);
   }
 
-  async function json(req) {
+  async function json(req, limit = 256 * 1024) {
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) throw new AppError(415, 'JSON 형식으로 요청해 주세요.');
     let size = 0;
     const chunks = [];
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > 256 * 1024) throw new AppError(413, '요청 내용이 너무 큽니다.');
+      if (size > limit) throw new AppError(413, '요청 내용이 너무 큽니다.');
       chunks.push(chunk);
     }
     let body;
@@ -217,15 +221,20 @@ export async function createApp(options = {}) {
           throw error;
         } finally { body.password = null; resetBusy = false; }
       }
+      if (pathname === '/api/workflows/validate' && req.method === 'POST') return send(res, 200, importWorkflow(await json(req, LIMITS.bytes)));
+      if (pathname === '/api/workflow-schema' && req.method === 'GET') return send(res, 200, fileSchema());
+      if (pathname === '/api/workflow-services' && req.method === 'GET') return send(res, 200, { services: workflows.serviceStates() });
+      if (pathname === '/api/workflow-services/resolve' && req.method === 'POST') return send(res, 200, await workflows.resolveService(await json(req)));
       if (pathname === '/api/workflows') {
         if (req.method === 'GET') return send(res, 200, { ...workflows.list(), engine: workflowEngine.status() });
-        if (req.method === 'POST') return send(res, 201, await workflows.create(await json(req)));
+        if (req.method === 'POST') return send(res, 201, await workflows.create(await json(req, LIMITS.bytes + 256 * 1024)));
       }
-      const workflow = /^\/api\/workflows\/([0-9a-f-]{36})(?:\/(enabled|run))?$/.exec(pathname);
+      const workflow = /^\/api\/workflows\/([0-9a-f-]{36})(?:\/(enabled|run|export))?$/.exec(pathname);
       if (workflow) {
         const id = workflow[1], action = workflow[2];
+        if (action === 'export' && req.method === 'GET') { const file = exportWorkflow(workflows.read(id)); res.setHeader('Content-Disposition', 'attachment; filename=workflow-' + id + '.json'); return send(res, 200, file); }
         if (!action && req.method === 'GET') return send(res, 200, workflows.read(id));
-        if (!action && req.method === 'PUT') return send(res, 200, await workflows.save(id, await json(req)));
+        if (!action && req.method === 'PUT') return send(res, 200, await workflows.save(id, await json(req, LIMITS.bytes + 256 * 1024)));
         if (!action && req.method === 'DELETE') { const result = await workflows.remove(id, await json(req)); workflowEngine.stopWorkflow(id); return send(res, 200, result); }
         if (action === 'enabled' && req.method === 'PUT') return send(res, 200, await workflows.enable(id, await json(req)));
         if (action === 'run' && req.method === 'POST') {
@@ -233,10 +242,11 @@ export async function createApp(options = {}) {
           const run = await workflows.run(id, await json(req)); workflowEngine.wake(); return send(res, 202, run);
         }
       }
-      const workflowRun = /^\/api\/workflow-runs\/([0-9a-f-]{36})(?:\/(rerun|cancel))?$/.exec(pathname);
+      const workflowRun = /^\/api\/workflow-runs\/([0-9a-f-]{36})(?:\/(rerun|cancel|reevaluate))?$/.exec(pathname);
       if (workflowRun) {
         const id = workflowRun[1], action = workflowRun[2];
         if (!action && req.method === 'GET') return send(res, 200, await workflows.readRun(id));
+        if (action === 'reevaluate' && req.method === 'POST') { if (workflowEngine.fault) throw new AppError(503, workflowEngine.fault); const run = await workflows.reevaluate(id, await json(req)); workflowEngine.wake(); return send(res, 202, run); }
         if (action === 'rerun' && req.method === 'POST') {
           if (workflowEngine.fault) throw new AppError(503, workflowEngine.fault);
           const run = await workflows.rerun(id, await json(req)); workflowEngine.wake(); return send(res, 202, run);

@@ -117,6 +117,40 @@ try {
  await click('[data-wf-delete-flow]');assert.equal(app.workflows.list().workflows.length,1);await click('#workflow-delete-dialog [data-close]');assert.equal(app.workflows.list().workflows.length,1);
  await click('[data-wf-delete-flow]');await click('[data-wf-confirm-delete]');await until(()=>evaluate('document.querySelector(".wf-list-empty strong")?.textContent==="등록된 워크플로우가 없습니다."'));
  assert.equal((await app.vault.snapshot()).workflowRuns.length,2);assert.equal((await app.workflows.readRun((await app.vault.snapshot()).workflowRuns[0].id)).canRerun,false);
+ // Exercise real file selection, validation, OFF import, saved download and current draft replacement.
+ await click('[data-wf-command="upload"]');
+ await command('DOM.enable');
+ async function uploadFile(filename) {
+   const doc = await command('DOM.getDocument');
+   const selected = await command('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '[data-workflow-file]' });
+   await command('DOM.setFileInputFiles', { nodeId: selected.nodeId, files: [filename] });
+   await until(() => evaluate('!document.querySelector("#workflow-file-dialog [type=submit]").disabled'));
+ }
+ await uploadFile(path.resolve('examples/workflows/service-state-http.json'));
+ assert.equal(app.workflows.list().workflows.length,0);
+ await evaluate('document.querySelector("#workflow-file-dialog form").requestSubmit()');
+ await until(() => evaluate('document.querySelectorAll(".wf-node").length===15'));
+ const imported = app.workflows.list().workflows[0]; assert.equal(imported.enabled,false); assert.equal(calls.length,2);
+ for(const type of ['service-state','find','datetime']) assert.equal(await evaluate('!!document.querySelector('+JSON.stringify('[data-wf-add="'+type+'"]')+')'),true);
+ await click('[data-wf-select="find"]'); assert.equal(await evaluate('document.querySelectorAll("[data-wf-output=find]").length'),3);
+ await click('[data-wf-select="severity"]'); assert.ok(await evaluate('document.querySelector("[data-wf-field=rules]").value.includes("any")'));
+ await command('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: runDir });
+ await click('[data-wf-command="download"]');
+ const downloaded = path.join(runDir,'workflow-'+imported.id+'.json');
+ await until(async () => {try {await fs.access(downloaded);return true;}catch{return false;}});
+ assert.equal(JSON.parse(await fs.readFile(downloaded,'utf8')).definition.nodes.length,15);
+ const largeNodes = [node('root','cron',{expression:'* * * * *',timezone:'UTC'}), ...Array.from({length:98},(_,i)=>node('date'+i,'datetime',{source:'now',timezone:'UTC',format:'iso'})), node('done','finish',{result:'success',message:''})];
+ const large = {format:'service-incident-timeline/workflow',formatVersion:1,requiredSecrets:[],definition:{name:'100 node browser fixture',nodes:largeNodes.map(({x,y,...rest})=>rest),edges:largeNodes.slice(1).map((node,i)=>edge(largeNodes[i].id,node.id))}};
+ const largeFile=path.join(runDir,'100-nodes.json');await fs.writeFile(largeFile,JSON.stringify(large));
+ await click('[data-wf-command="upload"]');await uploadFile(largeFile);await input('#workflow-file-dialog [name=destination]','current');
+ await evaluate('document.querySelector("#workflow-file-dialog form").requestSubmit()');await until(()=>evaluate('document.querySelectorAll(".wf-node").length===100'));
+ assert.equal(app.workflows.read(imported.id).nodes.length,15);
+ await click('[data-wf-add="datetime"]');assert.equal(await evaluate('document.querySelectorAll(".wf-node").length'),100);
+ await click('[data-wf-command="save"]');await until(()=>app.workflows.read(imported.id).nodes.length===100);
+ await click('[data-wf-command="arrange"]');await checkGrid('100 nodes');
+ for(const width of [1440,390]) {await viewport(width,width===390?844:1000);await click('[data-wf-command="fit"]');assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'),true);}
+ await screen('workflow-100-nodes');
+ await viewport(1440);await click('[data-wf-command="list"]');await click('[data-wf-command="services"]');await until(()=>evaluate('document.querySelector("#workflow-file-dialog").open'));await click('#workflow-file-dialog [data-close]');
  assert.deepEqual(errors,[]);console.log(JSON.stringify({result:'passed',calls:calls.length,layouts,errors}));
 } catch(error) {console.log(JSON.stringify({errors,screen:await evaluate('document.body.innerText')}));await screen('workflow-real-error');throw error;}
 finally {

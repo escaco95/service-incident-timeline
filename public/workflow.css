@@ -229,3 +229,8 @@
 .wf-workspace>.form-error,.wf-list-card>.form-error { padding:12px; }
 .wf-run-status:is(.canceled,.interrupted) { color:var(--red); }
 .wf-run-status:is(.queued,.running) { color:var(--amber); }
+
+#workflow-file-dialog pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wf-service-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.wf-editor-actions > div, .wf-list-actions { flex-wrap: wrap; }
+.wf-run-status.review { color: #b7791f; }
