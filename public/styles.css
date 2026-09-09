@@ -11,9 +11,13 @@
   --red:#bd3e3c;
   --red-bg:#fff3f1;
   --red-pill:#fbe0dc;
+  --red-pill-inactive:#e5b2ac;
+  --red-badge-text:#872c2a;
   --amber:#875d13;
   --amber-bg:#fffcf1;
   --amber-pill:#faeab7;
+  --amber-pill-inactive:#e6cd85;
+  --amber-badge-text:#67450f;
   --grid-line:#ebefe6;
   --label-width:228px;
   font-family:Inter,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
@@ -33,9 +37,13 @@
   --red:#ffa29a;
   --red-bg:#302020;
   --red-pill:#633631;
+  --red-pill-inactive:#362422;
+  --red-badge-text:var(--red);
   --amber:#efd082;
   --amber-bg:#2d2819;
   --amber-pill:#57451d;
+  --amber-pill-inactive:#332b1c;
+  --amber-badge-text:var(--amber);
   --grid-line:#2e3c34
 }
 
@@ -708,11 +716,15 @@ svg.icon {
 }
 
 .event-badge {
+  --badge-inset-left:5px;
+  --badge-inset-right:5px;
+  --badge-active:var(--amber-pill);
+  --badge-inactive:var(--amber-pill-inactive);
   position:relative;
   pointer-events:auto;
   border:0;
   border-radius:5px;
-  margin:0 5px;
+  margin:0 var(--badge-inset-right) 0 var(--badge-inset-left);
   display:flex;
   align-items:center;
   gap:6px;
@@ -722,13 +734,51 @@ svg.icon {
   font-size:11px;
   font-weight:600;
   overflow:hidden;
-  background:var(--amber-pill);
-  color:var(--amber)
+  background:var(--badge-inactive);
+  color:var(--amber-badge-text)
 }
 
 .event-badge.incident {
-  background:var(--red-pill);
-  color:var(--red)
+  --badge-active:var(--red-pill);
+  --badge-inactive:var(--red-pill-inactive);
+  color:var(--red-badge-text)
+}
+
+/* Match the date columns, then account for the badge's outer edge spacing. */
+.event-time-fill {
+  position:absolute;
+  top:0;
+  bottom:0;
+  left:calc(0px - var(--badge-inset-left));
+  right:calc(0px - var(--badge-inset-right));
+  display:grid;
+  grid-template-columns:repeat(var(--event-days),minmax(0,1fr));
+  pointer-events:none
+}
+
+.event-time-day {
+  position:relative;
+  min-width:0;
+  background:var(--badge-inactive)
+}
+
+.event-time-day:first-child {
+  margin-left:var(--badge-inset-left)
+}
+
+.event-time-day:last-child {
+  margin-right:var(--badge-inset-right)
+}
+
+.event-time-active {
+  position:absolute;
+  top:0;
+  bottom:0;
+  background:var(--badge-active)
+}
+
+.event-badge>:not(.event-time-fill) {
+  position:relative
 }
 
 .event-badge:hover {
@@ -737,16 +787,16 @@ svg.icon {
 }
 
 .event-badge.continues-left {
+  --badge-inset-left:0px;
   border-top-left-radius:0;
   border-bottom-left-radius:0;
-  margin-left:0;
   padding-left:6px
 }
 
 .event-badge.continues-right {
+  --badge-inset-right:0px;
   border-top-right-radius:0;
   border-bottom-right-radius:0;
-  margin-right:0;
   padding-right:6px
 }
 

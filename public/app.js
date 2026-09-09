@@ -374,7 +374,14 @@ function renderCalendarWeeks(visibleLanes) {
     const badges = segments.filter(segment => segment.lane < visibleLanes).map(segment => {
       const event = segment.event;
       const description = `${categories[event.category]} · ${event.title} · ${formatDateTime(event.start)} ~ ${formatDateTime(event.end)}`;
-      return `<button class="event-badge ${event.category}${!segment.startsHere ? ' continues-left' : ''}${!segment.endsHere ? ' continues-right' : ''}" style="grid-column:${segment.start + 1}/span ${segment.end - segment.start + 1};grid-row:${segment.lane + 1}" data-action="calendar-event" data-id="${event.id}" data-week="${dateKey(weekStart)}" data-start="${segment.start}" data-end="${segment.end}" title="이벤트를 눌러 타임라인 보기&#10;${escape(description)}" aria-label="${escape(description)}. 타임라인 보기">${!segment.startsHere ? '<span class="edge-marker">‹</span>' : '<span class="dot"></span>'}<span class="event-name">${escape(event.title)}</span>${event.end === null ? '<span class="infinity" aria-label="종료 시각 미정">∞</span>' : !segment.endsHere ? '<span class="edge-marker">›</span>' : ''}</button>`;
+      const dayCount = segment.end - segment.start + 1;
+      const fills = Array.from({ length: dayCount }, (_, index) => {
+        const day = addDays(weekStart, segment.start + index);
+        // Reuse the timeline's timezone-aware boundaries, including 23/25-hour days.
+        const portion = daySegment(event, day);
+        return `<span class="event-time-day" data-date="${day}"><span class="event-time-active" style="left:${(portion?.left ?? 0) * 100}%;width:${(portion?.width ?? 0) * 100}%"></span></span>`;
+      }).join('');
+      return `<button class="event-badge ${event.category}${!segment.startsHere ? ' continues-left' : ''}${!segment.endsHere ? ' continues-right' : ''}" style="grid-column:${segment.start + 1}/span ${dayCount};grid-row:${segment.lane + 1}" data-action="calendar-event" data-id="${event.id}" data-week="${dateKey(weekStart)}" data-start="${segment.start}" data-end="${segment.end}" title="이벤트를 눌러 타임라인 보기&#10;${escape(description)}&#10;밝은 영역: 이벤트 진행 시간 · 어두운 영역: 진행 시간 외" aria-label="${escape(description)}. 타임라인 보기"><span class="event-time-fill" style="--event-days:${dayCount}" aria-hidden="true">${fills}</span>${!segment.startsHere ? '<span class="edge-marker">‹</span>' : '<span class="dot"></span>'}<span class="event-name">${escape(event.title)}</span>${event.end === null ? '<span class="infinity" aria-label="종료 시각 미정">∞</span>' : !segment.endsHere ? '<span class="edge-marker">›</span>' : ''}</button>`;
     }).join('');
     weeks.push(`<div class="calendar-week" data-week="${dateKey(weekStart)}"><div class="day-cells">${cells}</div><div class="week-events">${badges}</div></div>`);
   }

@@ -136,6 +136,55 @@ async function checkCalendarLayout({ weeks, fits, september = false }) {
   return layout;
 }
 
+async function checkCalendarTimeFills() {
+  const fills = await evaluate(`Array.from(document.querySelectorAll('.event-time-day')).map(day => {
+    const badge = day.closest('.event-badge');
+    const cell = badge.closest('.calendar-week').querySelector('.day-cell[data-date="' + day.dataset.date + '"]');
+    const active = day.querySelector('.event-time-active');
+    const box = day.getBoundingClientRect(), color = active.getBoundingClientRect();
+    const bounds = badge.getBoundingClientRect(), date = cell.getBoundingClientRect();
+    return { title: badge.querySelector('.event-name').textContent, date: day.dataset.date,
+      left: (color.left - box.left) / box.width, width: color.width / box.width,
+      alignment: Math.max(Math.abs(box.left - Math.max(date.left, bounds.left)), Math.abs(box.right - Math.min(date.right, bounds.right))) };
+  })`);
+  assert.ok(fills.length > 0, 'calendar badges must display daily time spans');
+  for (const fill of fills) assert.ok(fill.alignment < 0.1, `fill must align with its calendar date: ${JSON.stringify(fill)}`);
+  const expected = [
+    ['시간 비율 확인', '2026-09-03', 9 / 24, 9 / 24],
+    ['데이터베이스 정기 점검', '2026-09-07', 22 / 24, 2 / 24],
+    ['데이터베이스 정기 점검', '2026-09-08', 0, 1],
+    ['데이터베이스 정기 점검', '2026-09-09', 0, 1],
+    ['데이터베이스 정기 점검', '2026-09-10', 0, 11 / 24],
+    ['인증 서비스 불안정', '2026-09-09', 15 / 24, 9 / 24],
+    ['인증 서비스 불안정', '2026-09-13', 0, 1],
+    ['주 경계 점검', '2026-09-05', 23 / 24, 1 / 24],
+    ['주 경계 점검', '2026-09-06', 0, 1],
+    ['월 경계 점검', '2026-08-31', 18 / 24, 6 / 24],
+    ['월 경계 점검', '2026-09-01', 0, 1],
+    ['월 경계 점검', '2026-09-02', 0, 12 / 24]
+  ];
+  for (const [title, date, left, width] of expected) {
+    const fill = fills.find(item => item.title === title && item.date === date);
+    assert.ok(fill, `missing daily fill: ${title}, ${date}`);
+    assert.ok(Math.abs(fill.left - left) < 0.001 && Math.abs(fill.width - width) < 0.001, JSON.stringify(fill));
+  }
+  assert.ok(!fills.some(item => item.title === '주 경계 점검' && item.date === '2026-09-07'), 'midnight ending must not paint the following day');
+  const colors = await evaluate(`Array.from(document.querySelectorAll('.event-badge')).map(badge => {
+    const style = element => getComputedStyle(element);
+    return { text: style(badge).color, active: style(badge.querySelector('.event-time-active')).backgroundColor,
+      inactive: style(badge.querySelector('.event-time-day')).backgroundColor, titleOnTop: style(badge.querySelector('.event-name')).position !== 'static' };
+  })`);
+  const luminance = rgb => rgb.match(/[0-9.]+/g).slice(0, 3).map(Number).map(v => v / 255).map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  for (const color of colors) {
+    assert.ok(luminance(color.active) > luminance(color.inactive), 'time outside the event must be darker in both themes');
+    for (const background of [color.active, color.inactive]) {
+      const a = luminance(color.text), b = luminance(background);
+      assert.ok((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) >= 4.5, `badge text must remain readable: ${JSON.stringify(color)}`);
+    }
+    assert.ok(color.titleOnTop, 'the duration fill must not cover the title');
+  }
+}
+
 try {
   let port;
   await until(async () => {
@@ -211,6 +260,9 @@ try {
   assert.equal(await evaluate('document.querySelector(".brand-caption").textContent'), branding.subtitle);
   assert.equal(await evaluate('Intl.DateTimeFormat().resolvedOptions().timeZone'), 'America/Los_Angeles');
   const seeds = [
+    { title: '시간 비율 확인', service: 'Schedule', category: 'maintenance', start: '2026-09-03T00:00:00.000Z', end: '2026-09-03T09:00:00.000Z', description: '09:00~18:00 구간을 배지의 가운데에 표시합니다.' },
+    { title: '주 경계 점검', service: 'Schedule', category: 'maintenance', start: '2026-09-05T14:00:00.000Z', end: '2026-09-06T15:00:00.000Z', description: '' },
+    { title: '월 경계 점검', service: 'Schedule', category: 'incident', start: '2026-08-31T09:00:00.000Z', end: '2026-09-02T03:00:00.000Z', description: '' },
     { title: '결제 API 응답 지연', service: 'Payment API', category: 'incident', start: '2026-09-09T01:20:00.000Z', end: '2026-09-09T04:45:00.000Z', description: '오류율 증가 확인 후 트래픽을 우회했습니다.\n13:45 정상 응답 확인.' },
     { title: '데이터베이스 정기 점검', service: 'Primary DB', category: 'maintenance', start: '2026-09-07T13:00:00.000Z', end: '2026-09-10T02:00:00.000Z', description: '여러 날짜에 걸친 정기 점검입니다.' },
     { title: '인증 서비스 불안정', service: 'Identity', category: 'instability', start: '2026-09-09T06:00:00.000Z', end: null, description: '원인을 확인하고 있습니다.' },
@@ -232,6 +284,7 @@ try {
   await waitFor('!!document.querySelector(".calendar")', 'calendar reload');
   await evaluate(`(() => { const year = document.querySelector('#calendar-year'); year.value = '2026'; year.dispatchEvent(new Event('change', { bubbles: true })); const month = document.querySelector('#calendar-month'); month.value = '8'; month.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await checkCalendarLayout({ weeks: 5, fits: true, september: true });
+  await checkCalendarTimeFills();
   for (const [year, month, weeks, first, last] of [
     [2026, 2, 4, '2026-02-01', '2026-02-28'],
     [2024, 2, 5, '2024-01-28', '2024-03-02'],
@@ -276,6 +329,7 @@ try {
   assert.equal(await evaluate('document.querySelector("#calendar-month").value'), '8');
   assert.equal(await evaluate('getComputedStyle(document.querySelector(".workspace")).backgroundColor'), 'rgb(27, 40, 34)');
   await screenshot('calendar-dark', true);
+  await checkCalendarTimeFills();
   assert.equal(await fs.readFile(path.join(runDir, 'data', 'store.json'), 'utf8'), encryptedBeforeTheme);
   assert.equal(mutations.length, mutationsBeforeTheme);
   // Click the middle day of a multi-day badge with an actual pointer event.
