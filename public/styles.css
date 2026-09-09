@@ -744,6 +744,18 @@ svg.icon {
   color:var(--red-badge-text)
 }
 
+/* Trace only the left and right edges, following the badge's rounded corners. */
+.event-badge::after {
+  content:"";
+  position:absolute;
+  inset:0;
+  border-left:2px solid currentColor;
+  border-right:2px solid currentColor;
+  border-radius:inherit;
+  z-index:1;
+  pointer-events:none
+}
+
 /* Match the date columns, then account for the badge's outer edge spacing. */
 .event-time-fill {
   position:absolute;
