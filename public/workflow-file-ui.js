@@ -49,14 +49,17 @@ export function createWorkflowFiles({ api, escape, generation, active, current, 
     if (session !== generation() || !active()) return;
     dialog.innerHTML = `<div class="dialog-heading"><h2>서비스 계산 상태와 보류</h2><button class="button secondary" data-close="workflow-file-dialog">닫기</button></div><p>계산 상태는 외부 시스템의 실제 상태와 다를 수 있습니다. 보류 해소 후 워크플로우에서 현재 상태를 수동 평가하세요.</p><p class="form-error" data-file-error hidden></p>${data.services.map((item, index) => `<div class="wf-service-row"><strong>${escape(item.service)}</strong> · ${escape(({ incident: '적색', warning: '황색', '': '정상' })[item.severity])}${item.hold ? `<p>확인 필요 · 실행 ${escape(item.hold.runId)}</p><button class="button secondary" data-resolve-service="${index}">확인 후 보류 해소</button>` : ' · 보류 없음'}</div>`).join('') || '<p>아직 수립된 서비스 상태가 없습니다.</p>'}`;
     if (!dialog.open) dialog.showModal();
-    for (const button of dialog.querySelectorAll('[data-resolve-service]')) button.addEventListener('click', async () => {
+    for (const button of dialog.querySelectorAll('[data-resolve-service]')) {
+      const requestId = crypto.randomUUID();
+      button.addEventListener('click', async () => {
       const item = data.services[Number(button.dataset.resolveService)];
       if (!confirm('이전 요청의 실제 적용 결과와 처리가 완전히 끝났음을 외부 시스템에서 확인했습니까? 현재 상태가 같다는 사실만으로는 충분하지 않습니다. 확인한 경우 보류를 해소하고 감사 기록을 남깁니다.')) return;
       button.disabled = true;
-      try { await api('/api/workflow-services/resolve', { method: 'POST', body: JSON.stringify({ service: item.service, runId: item.hold.runId, requestId: crypto.randomUUID(), confirmed: true, previousRequestFinished: true }) }); if (session === generation() && dialog.open && active()) await services(); }
+      try { await api('/api/workflow-services/resolve', { method: 'POST', body: JSON.stringify({ service: item.service, runId: item.hold.runId, requestId, confirmed: true, previousRequestFinished: true }) }); if (session === generation() && dialog.open && active()) await services(); }
       catch (failure) { if (session === generation() && dialog.open) error(failure.message); }
       finally { button.disabled = false; }
-    });
+      });
+    }
   }
   return { upload, download, services, close: () => dialog.close() };
 }

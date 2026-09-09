@@ -151,6 +151,20 @@ try {
  for(const width of [1440,390]) {await viewport(width,width===390?844:1000);await click('[data-wf-command="fit"]');assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'),true);}
  await screen('workflow-100-nodes');
  await viewport(1440);await click('[data-wf-command="list"]');await click('[data-wf-command="services"]');await until(()=>evaluate('document.querySelector("#workflow-file-dialog").open'));await click('#workflow-file-dialog [data-close]');
+ // Service manual execution and explicit review resolution use the real authenticated APIs.
+ let serviceFlow=app.workflows.read(imported.id);
+ serviceFlow=await app.workflows.save(serviceFlow.id,{...serviceFlow,nodes:[node('trigger','service-state',{service:'resource-a'}),node('review','finish',{result:'review',message:'Fixture confirmation required'})],edges:[edge('trigger','review')]});
+ await click('[data-wf-open]');await click('[data-wf-command="reload"]');await until(()=>evaluate('document.querySelectorAll(".wf-node").length===2'));
+ await click('[data-wf-command="run"]');await until(()=>evaluate('document.querySelector("#workflow-run-dialog").open'));
+ assert.equal(await evaluate('document.querySelector("#workflow-run-dialog [name=service]").value'),'resource-a');
+ await evaluate('document.querySelector("[data-wf-run-form]").requestSubmit()');await until(()=>evaluate('!!document.querySelector("#audit-detail-dialog .audit-result.review")'));
+ assert.ok(await evaluate('!!document.querySelector("[data-audit-run-action=reevaluate]")'));
+ const reviewRun=(await app.vault.snapshot()).workflowRuns.find(run=>run.workflowId===imported.id&&run.status==='review');assert.ok(reviewRun);
+ await click('[data-audit-run-action="reevaluate"]');await until(async()=>(await app.vault.snapshot()).workflowRuns.some(run=>run.parentId===reviewRun.id&&run.status==='review'));
+ await click('#audit-detail-dialog [data-close]');await click('[data-view="workflow"]');await click('[data-wf-command="list"]');await click('[data-wf-command="services"]');await until(()=>evaluate('!!document.querySelector("[data-resolve-service]")'));
+ await click('[data-resolve-service]');await until(()=>!app.workflows.serviceStates().find(item=>item.service==='resource-a').hold);
+ assert.equal((await app.workflows.readRun(reviewRun.id)).status,'review');assert.equal(calls.length,2);
+ await click('#workflow-file-dialog [data-close]');
  assert.deepEqual(errors,[]);console.log(JSON.stringify({result:'passed',calls:calls.length,layouts,errors}));
 } catch(error) {console.log(JSON.stringify({errors,screen:await evaluate('document.body.innerText')}));await screen('workflow-real-error');throw error;}
 finally {

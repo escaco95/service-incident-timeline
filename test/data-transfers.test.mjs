@@ -61,6 +61,28 @@ async function repack(f, data) {
   await writer.add('manifest.json', Buffer.from(JSON.stringify(manifest))); await writer.finish(); return fs.readFile(file);
 }
 
+test('workflow review results and service holds survive archive validation, restore and restart', async t => {
+  const f = await fixture(t); await f.setup();
+  const flow = await f.app.workflows.create({ name: 'Held service', requestId: randomUUID(), nodes: [
+    { id: 'trigger', type: 'service-state', name: 'Service', x: 36, y: 36, config: { service: '' } },
+    { id: 'review', type: 'finish', name: 'Review', x: 36, y: 234, config: { result: 'review', message: 'External result needs confirmation' } }
+  ], edges: [{ id: 'next', from: 'trigger', to: 'review', port: 'next' }] });
+  const run = await f.app.workflows.run(flow.id, { version: flow.version, service: 'resource-a', requestId: randomUUID() });
+  await f.app.workflowEngine.tick(); await Promise.all([...f.app.workflowEngine.jobs.values()].map(job => job.promise));
+  assert.equal((await f.app.workflows.readRun(run.id)).status, 'review');
+  const hold = f.app.workflows.serviceStates()[0].hold;
+  const { bytes } = await f.exported(), exported = await contents(f, bytes);
+  assert.deepEqual(exported.get('settings.json').metadata.serviceState.services[0].hold, hold);
+  const uploaded = await f.uploaded(bytes); assert.equal(uploaded.status, 'ready', uploaded.error);
+  assert.equal((await f.restore(uploaded)).status, 'completed');
+  assert.equal((await f.app.workflows.readRun(run.id)).status, 'review');
+  assert.deepEqual(f.app.workflows.serviceStates()[0].hold, hold);
+  await f.restart(); await f.call('/api/login', 'POST', { password });
+  assert.deepEqual(f.app.workflows.serviceStates()[0].hold, hold);
+  const invalid = await contents(f, bytes); invalid.get('settings.json').metadata.serviceState.services[0].hold.runId = 'invalid';
+  assert.equal((await f.uploaded(await repack(f, invalid))).status, 'failed');
+});
+
 test('내보내기·업로드·상태·다운로드는 인증·출처·세션 소유권을 확인한다', async t => {
   const f = await fixture(t);
   assert.equal((await f.call('/api/settings/transfers')).status, 401); await f.setup();

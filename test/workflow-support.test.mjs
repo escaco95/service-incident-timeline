@@ -40,8 +40,20 @@ async function settle(app, id) {
   throw Error('Run did not finish: ' + JSON.stringify(await app.workflows.readRun(id)));
 }
 async function drain(app) {
+  const deadline = Date.now() + 10000;
+  const waitTick = async () => {
+    while (app.workflowEngine.ticking) {
+      if (Date.now() >= deadline) throw Error('Scheduler did not settle');
+      await delay(1);
+    }
+  };
+  // Jobs wake the scheduler in a microtask after finishing. Complete that real
+  // evaluation before the fixture advances its synthetic clock to another edge.
+  await waitTick();
   await app.workflowEngine.tick();
   for (const run of (await app.vault.snapshot({ activeRuns: true })).workflowRuns) await settle(app, run.id);
+  await Promise.all([...app.workflowEngine.jobs.values()].map(job => job.promise));
+  await waitTick();
 }
 
 test('file format, deterministic layout, 99/100/101 nodes, strict fields and secret-free round trip', async () => {
