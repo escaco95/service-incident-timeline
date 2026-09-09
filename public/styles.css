@@ -19,6 +19,10 @@
   --amber-pill-inactive:#e6cd85;
   --amber-badge-text:#67450f;
   --badge-hatch:rgb(255 255 255 / 18%);
+  --event-ongoing-brightness:1.04;
+  --event-idle-brightness:.96;
+  --event-idle-text-opacity:.95;
+  --event-idle-edge-opacity:.85;
   --grid-line:#ebefe6;
   --label-width:228px;
   font-family:Inter,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
@@ -46,6 +50,8 @@
   --amber-pill-inactive:#332b1c;
   --amber-badge-text:var(--amber);
   --badge-hatch:rgb(255 255 255 / 7%);
+  --event-ongoing-brightness:1.12;
+  --event-idle-brightness:.94;
   --grid-line:#2e3c34
 }
 
@@ -774,13 +780,23 @@ svg.icon {
   display:flex;
   align-items:center;
   gap:6px;
-  padding:0 8px;
+  padding:0;
   min-width:0;
   text-align:left;
   font-size:11px;
   font-weight:600;
   overflow:hidden;
   background:var(--badge-inactive)
+}
+
+.event-badge-content {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  width:100%;
+  height:100%;
+  min-width:0;
+  padding:0 8px
 }
 
 .event-badge.incident,.overflow-item.incident {
@@ -801,6 +817,19 @@ svg.icon {
   pointer-events:none
 }
 
+/* Preserve other dates when today's inactive portion crosses a label or an edge. */
+.event-badge[data-activity="idle"] .event-badge-content {
+  --event-mask-opacity:var(--event-idle-text-opacity)
+}
+
+.event-badge[data-activity="idle"]::after {
+  --event-mask-opacity:var(--event-idle-edge-opacity)
+}
+
+.event-badge[data-activity="idle"] .event-badge-content,.event-badge[data-activity="idle"]::after {
+  mask-image:linear-gradient(to right,#000 0 var(--event-idle-start),rgb(0 0 0 / var(--event-mask-opacity)) var(--event-idle-start) var(--event-idle-end),#000 var(--event-idle-end) 100%)
+}
+
 /* Match the date columns, then account for the badge's outer edge spacing. */
 .event-time-fill {
   position:absolute;
@@ -817,7 +846,23 @@ svg.icon {
   position:relative;
   min-width:0;
   background-color:var(--badge-inactive);
-  background-image:repeating-linear-gradient(135deg,transparent 0 7px,var(--badge-hatch) 7px 8px)
+  background-image:repeating-linear-gradient(135deg,transparent 0 7px,var(--badge-hatch) 7px 8px);
+  filter:brightness(var(--event-background-brightness,1))
+}
+
+/* Keep background brightness independent from foreground contrast and time geometry. */
+:is(.event-time-day,.timeline-bar)[data-activity="ongoing"] {
+  --event-background-brightness:var(--event-ongoing-brightness)
+}
+
+:is(.event-time-day,.timeline-bar)[data-activity="idle"] {
+  --event-background-brightness:var(--event-idle-brightness)
+}
+
+/* These light-theme palettes have less text contrast to spare. */
+:root:not([data-theme="dark"]) :is(.event-badge.incident,.overflow-item.incident,.timeline-bar) {
+  --event-idle-brightness:.997;
+  --event-idle-text-opacity:.99
 }
 
 .event-time-day:first-child {
@@ -847,18 +892,25 @@ svg.icon {
 .event-badge.continues-left {
   --badge-inset-left:0px;
   border-top-left-radius:0;
-  border-bottom-left-radius:0;
-  padding-left:6px
+  border-bottom-left-radius:0
 }
 
 .event-badge.continues-right {
   --badge-inset-right:0px;
   border-top-right-radius:0;
-  border-bottom-right-radius:0;
+  border-bottom-right-radius:0
+}
+
+.event-badge.continues-left .event-badge-content {
+  padding-left:6px
+}
+
+.event-badge.continues-right .event-badge-content {
   padding-right:6px
 }
 
 .event-name {
+  position:relative;
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
@@ -1174,6 +1226,8 @@ svg.icon {
 }
 
 .timeline-bar {
+  --timeline-border:#e6c97b;
+  --timeline-background:#faedc8;
   position:absolute;
   top:21px;
   height:33px;
@@ -1184,8 +1238,8 @@ svg.icon {
   overflow:hidden;
   text-align:left;
   padding:0 9px;
-  border:1px solid #e6c97b;
-  background:#faedc8;
+  border:1px solid var(--timeline-border);
+  background:var(--timeline-background);
   color:#886423;
   border-radius:5px;
   font-size:10px;
@@ -1194,9 +1248,31 @@ svg.icon {
 }
 
 .timeline-bar.incident {
-  background:#f9deda;
-  border-color:#e6b2a9;
+  --timeline-background:#f9deda;
+  --timeline-border:#e6b2a9;
   color:#b3433a
+}
+
+.timeline-bar[data-activity]::before {
+  content:"";
+  position:absolute;
+  inset:0;
+  background:inherit;
+  filter:brightness(var(--event-background-brightness,1));
+  pointer-events:none
+}
+
+.timeline-bar[data-activity]>span {
+  position:relative
+}
+
+.timeline-bar[data-activity="idle"] {
+  border-left-color:color-mix(in srgb,var(--timeline-border) 85%,var(--timeline-background));
+  border-right-color:color-mix(in srgb,var(--timeline-border) 85%,var(--timeline-background))
+}
+
+.timeline-bar[data-activity="idle"]>span {
+  mask-image:linear-gradient(rgb(0 0 0 / var(--event-idle-text-opacity)),rgb(0 0 0 / var(--event-idle-text-opacity)))
 }
 
 .timeline-bar.continues-left {
@@ -1681,6 +1757,10 @@ svg.icon {
   overflow-wrap:anywhere
 }
 
+.overflow-item[data-activity="idle"] :is(.overflow-item-body,.icon) {
+  opacity:var(--event-idle-text-opacity)
+}
+
 .overflow-context {
   margin:8px 0 0;
   font-size:11px;
@@ -2077,14 +2157,14 @@ svg.icon {
 }
 
 :root[data-theme="dark"] .timeline-bar {
-  background:var(--amber-pill);
-  border-color:#8d7333;
+  --timeline-background:var(--amber-pill);
+  --timeline-border:#8d7333;
   color:var(--amber)
 }
 
 :root[data-theme="dark"] .timeline-bar.incident {
-  background:var(--red-pill);
-  border-color:#a25e54;
+  --timeline-background:var(--red-pill);
+  --timeline-border:#a25e54;
   color:var(--red)
 }
 

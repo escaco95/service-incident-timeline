@@ -344,6 +344,8 @@ function fitCalendar() {
   const visibleLanes = Math.max(1, Math.min(3, Math.floor((weekHeight - pixels('--calendar-event-top') - pixels('--calendar-more-space') + gap) / (pixels('--calendar-event-height') + gap))));
   if (Number(calendar.dataset.visibleLanes) !== visibleLanes) {
     const focused = weeks.contains(document.activeElement) ? { ...document.activeElement.dataset } : null;
+    // Activity is derived after layout; it is not part of the button's identity.
+    if (focused) delete focused.activity;
     weeks.innerHTML = renderCalendarWeeks(visibleLanes);
     calendar.dataset.visibleLanes = visibleLanes;
     if (focused) {
@@ -353,9 +355,42 @@ function fitCalendar() {
   updateCalendarNow(new Date());
 }
 
+function updateEventActivity(container, now) {
+  if (!container) return;
+  const today = dateKey(now);
+  const instant = +now;
+  const events = new Map(state.events.map(event => [event.id, event]));
+  for (const element of container.querySelectorAll('.event-time-day, .timeline-bar')) {
+    const event = events.get(element.closest('[data-id]')?.dataset.id);
+    // Emphasize the present only; other days retain their original time proportions.
+    if (element.dataset.date !== today || !event) {
+      delete element.dataset.activity;
+      continue;
+    }
+    const ongoing = Date.parse(event.start) <= instant && (event.end === null || instant < Date.parse(event.end));
+    element.dataset.activity = ongoing ? 'ongoing' : 'idle';
+  }
+  for (const badge of container.querySelectorAll('.event-badge, .overflow-item')) {
+    const todayPart = badge.querySelector('.event-time-day[data-activity]');
+    if (todayPart) badge.dataset.activity = todayPart.dataset.activity;
+    else delete badge.dataset.activity;
+    if (todayPart?.dataset.activity === 'idle' && badge.classList.contains('event-badge')) {
+      const bounds = badge.getBoundingClientRect();
+      const portion = todayPart.getBoundingClientRect();
+      // Mask just today's part of a continuous badge, including any text crossing midnight.
+      badge.style.setProperty('--event-idle-start', `${(portion.left - bounds.left) / bounds.width * 100}%`);
+      badge.style.setProperty('--event-idle-end', `${(portion.right - bounds.left) / bounds.width * 100}%`);
+    } else {
+      badge.style.removeProperty('--event-idle-start');
+      badge.style.removeProperty('--event-idle-end');
+    }
+  }
+}
+
 function updateCalendarNow(now) {
   const calendar = $('.calendar');
   if (!calendar) return;
+  updateEventActivity(calendar, now);
   const today = dateKey(now);
   const cell = calendar.querySelector(`.day-cell[data-date="${today}"]`);
   const previous = calendar.querySelector('.day-cell.today');
@@ -393,6 +428,7 @@ function currentDayPosition(now) {
 function updateOverflowNow(now) {
   const dialog = $('#overflow-dialog');
   if (!dialog.open) return;
+  updateEventActivity(dialog, now);
   const isToday = dialog.dataset.date === dateKey(now);
   const label = $('#overflow-now-text');
   label.hidden = !isToday;
@@ -434,7 +470,7 @@ function renderCalendarWeeks(visibleLanes) {
       const description = `${categories[event.category]} · ${event.title} · ${formatDateTime(event.start)} ~ ${formatDateTime(event.end)}`;
       const dayCount = segment.end - segment.start + 1;
       const fills = Array.from({ length: dayCount }, (_, index) => renderEventTimeDay(event, addDays(weekStart, segment.start + index))).join('');
-      return `<button class="event-badge ${event.category}${!segment.startsHere ? ' continues-left' : ''}${!segment.endsHere ? ' continues-right' : ''}" style="grid-column:${segment.start + 1}/span ${dayCount};grid-row:${segment.lane + 1}" data-action="calendar-event" data-id="${event.id}" data-week="${dateKey(weekStart)}" data-start="${segment.start}" data-end="${segment.end}" title="이벤트를 눌러 해당 날짜의 이벤트 목록 보기&#10;${escape(description)}&#10;밝은 영역: 이벤트 진행 시간 · 어두운 영역: 진행 시간 외" aria-label="${escape(description)}. 해당 날짜의 이벤트 목록 보기" aria-haspopup="dialog"><span class="event-time-fill" style="--event-days:${dayCount}" aria-hidden="true">${fills}</span>${!segment.startsHere ? '<span class="edge-marker">‹</span>' : '<span class="dot"></span>'}<span class="event-name">${escape(event.title)}</span>${event.end === null ? '<span class="infinity" aria-label="종료 시각 미정">∞</span>' : !segment.endsHere ? '<span class="edge-marker">›</span>' : ''}</button>`;
+      return `<button class="event-badge ${event.category}${!segment.startsHere ? ' continues-left' : ''}${!segment.endsHere ? ' continues-right' : ''}" style="grid-column:${segment.start + 1}/span ${dayCount};grid-row:${segment.lane + 1}" data-action="calendar-event" data-id="${event.id}" data-week="${dateKey(weekStart)}" data-start="${segment.start}" data-end="${segment.end}" title="이벤트를 눌러 해당 날짜의 이벤트 목록 보기&#10;${escape(description)}&#10;밝은 영역: 이벤트 진행 시간 · 어두운 영역: 진행 시간 외" aria-label="${escape(description)}. 해당 날짜의 이벤트 목록 보기" aria-haspopup="dialog"><span class="event-time-fill" style="--event-days:${dayCount}" aria-hidden="true">${fills}</span><span class="event-badge-content">${!segment.startsHere ? '<span class="edge-marker">‹</span>' : '<span class="dot"></span>'}<span class="event-name">${escape(event.title)}</span>${event.end === null ? '<span class="infinity" aria-label="종료 시각 미정">∞</span>' : !segment.endsHere ? '<span class="edge-marker">›</span>' : ''}</span></button>`;
     }).join('');
     weeks.push(`<div class="calendar-week" data-week="${dateKey(weekStart)}"><div class="day-cells">${cells}</div><div class="week-events">${badges}</div></div>`);
   }
@@ -521,7 +557,7 @@ function renderTimelineRows() {
         const duration = dayEnd - dayStart;
         const grid = `<div class="timeline-day-segment" style="left:${index * dayWidth}px;width:${dayWidth}px;background-image:linear-gradient(to right,var(--grid-line) 1px,transparent 1px);background-size:${duration ? 3 * 3600000 / duration * dayWidth : dayWidth}px 100%"></div>`;
         if (!segment) return grid;
-        return `${grid}<button class="timeline-bar ${event.category}${!segment.startsHere ? ' continues-left' : ''}${!segment.endsHere ? ' continues-right' : ''}" style="left:${(index + segment.left) * dayWidth}px;width:${segment.width * dayWidth}px" data-action="detail" data-id="${event.id}" title="이벤트를 눌러 상세 보기&#10;${escape(`${event.title} · ${formatDateTime(event.start)} ~ ${formatDateTime(event.end)}`)}" aria-label="${escape(event.title)} 상세 보기"><span class="bar-label">${escape(event.title)}</span>${segment.startsHere ? `<span class="bar-time">${timeLabel(event.start)}</span>` : ''}${segment.open ? '<span class="infinity" aria-label="종료 시각 미정">∞</span>' : !segment.endsHere ? '<span class="edge-marker">›</span>' : ''}</button>`;
+        return `${grid}<button class="timeline-bar ${event.category}${!segment.startsHere ? ' continues-left' : ''}${!segment.endsHere ? ' continues-right' : ''}" style="left:${(index + segment.left) * dayWidth}px;width:${segment.width * dayWidth}px" data-action="detail" data-id="${event.id}" data-date="${day}" title="이벤트를 눌러 상세 보기&#10;${escape(`${event.title} · ${formatDateTime(event.start)} ~ ${formatDateTime(event.end)}`)}" aria-label="${escape(event.title)} 상세 보기"><span class="bar-label">${escape(event.title)}</span>${segment.startsHere ? `<span class="bar-time">${timeLabel(event.start)}</span>` : ''}${segment.open ? '<span class="infinity" aria-label="종료 시각 미정">∞</span>' : !segment.endsHere ? '<span class="edge-marker">›</span>' : ''}</button>`;
       }).join('');
       return `<div class="timeline-row${event.id === state.highlightedId ? ' highlighted' : ''}" data-event-id="${event.id}"><button class="timeline-label" data-action="detail" data-id="${event.id}" title="이벤트를 눌러 상세 보기&#10;${escape(event.title)}" aria-label="${escape(event.title)} 상세 보기"><span class="timeline-event-title"><i class="dot ${event.category}"></i><span>${escape(event.title)}</span></span><span class="timeline-service">${escape(event.service || categories[event.category])}${event.end === null ? ' · 종료 미정 ∞' : ''}</span></button><div class="timeline-lane" style="width:${7 * dayWidth}px;background-image:none">${segments}</div></div>`;
     }).join('');
@@ -533,6 +569,7 @@ function updateNow() {
   const now = new Date();
   updateCalendarNow(now);
   updateOverflowNow(now);
+  updateEventActivity($('#timeline-rows'), now);
   const line = $('#now-line');
   if (!line || !timelineStart) return;
   let dayIndex = -1;
