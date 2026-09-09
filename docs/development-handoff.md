@@ -28,6 +28,8 @@
 
 ## 검증
 
+Danger Zone의 데이터 내보내기·복원은 `lib/data-transfers.mjs`, `lib/archive-worker.mjs`, `lib/archive-data.mjs`, `lib/archive-zip.mjs`, `lib/restore-journal.mjs`와 `public/data-transfer-ui.js`로 구현한다. ZIP 검증 단계에는 원본을 변경하지 않고, 확인·현재 비밀번호 재입력 후 전체 교체하며 현재 비밀번호를 유지한다. 새 파일 준비 후 승인 기록을 남겨 재시작에서 복원을 완료한다. `test/data-transfers.test.mjs`의 10년 일별 기록 왕복, 손상·중복 거부, 비밀번호 유지, 실패 복구, 임시 파일·실행 중 작업 정리와 `test/archive-zip.test.mjs`의 외부 ZIP 호환성, `scripts/data-transfer-browser-check.mjs`의 다운로드·업로드·검증·복원·모바일을 검증한다. [운영 및 API](data-transfer.md)를 참고한다.
+
 `node --test test/*.test.mjs`는 암호화·인증·동시 쓰기·충돌·날짜·브랜딩·서비스·지원하지 않는 schema 보존·감사 이력·폐기 API를 검증한다. `node scripts/browser-check.mjs`는 설치된 Chromium 브라우저와 임시 데이터로 캘린더·타임라인·수기 편집·설정·감사 조회·모바일·XSS 렌더링·세션을 검증한다. `node --test test/workflows.test.mjs`와 `node scripts/workflow-browser-check.mjs`는 저장·예약·조건·HTTP·비밀 가림·취소·재시작·이력·재실행과 편집 화면을 검증한다. HTTP 통합 테스트는 로컬 서버만 호출한다.
 
 시작·종료는 입력한 시각에 실행하고 지난 시각은 소급하지 않는 기준으로 확정했다. HTTP 응답에 따른 전체 성공·실패는 작성자가 조건과 종료 노드로 정의한다. [워크플로우 사용 안내](workflow-transition-plan.md)에 실제 구현과 제한을 정리했다.

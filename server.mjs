@@ -7,11 +7,13 @@ import { WorkflowEngine } from './lib/workflow-engine.mjs';
 import { LogMaintenance } from './lib/log-maintenance.mjs';
 import { RESET_TARGETS, resetData, hasPendingSystemReset, beginSystemReset, finishSystemReset } from './lib/reset.mjs';
 import { enrollSetupMarker, operatorResetRequested } from './lib/setup-marker.mjs';
+import { DataTransfers } from './lib/data-transfers.mjs';
+import { hasPendingRestore, completeRestore, publishRestore } from './lib/restore-journal.mjs';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Vault, AppError, checkPassword } from './lib/vault.mjs';
+import { Vault, AppError, checkPassword, recordChange } from './lib/vault.mjs';
 import { BrandingStore, brandingTitle, escapeHtml, validateBranding } from './lib/branding.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +23,7 @@ const ASSETS = new Map([
   ['/services-ui.js', ['services-ui.js', 'text/javascript; charset=utf-8']],
   ['/log-policy-ui.js', ['log-policy-ui.js', 'text/javascript; charset=utf-8']],
   ['/danger-zone-ui.js', ['danger-zone-ui.js', 'text/javascript; charset=utf-8']],
+  ['/data-transfer-ui.js', ['data-transfer-ui.js', 'text/javascript; charset=utf-8']],
   ['/audit-ui.js', ['audit-ui.js', 'text/javascript; charset=utf-8']],
   ['/event-loader.js', ['event-loader.js', 'text/javascript; charset=utf-8']],
   ['/audit.css', ['audit.css', 'text/css; charset=utf-8']],
@@ -43,6 +46,7 @@ export async function createApp(options = {}) {
     else {
       await enrollSetupMarker(vault);
       if (await operatorResetRequested(vault)) { await beginSystemReset(vault); await finishSystemReset(vault, brandingStore); }
+      else if (await hasPendingRestore(vault)) await completeRestore(vault, brandingStore);
     }
     await brandingStore.open();
   }
@@ -50,25 +54,30 @@ export async function createApp(options = {}) {
   const workflows = new Workflows(vault, options.workflows);
   const workflowEngine = new WorkflowEngine(vault, options.workflows);
   const logMaintenance = new LogMaintenance(vault, { ...options.logMaintenance, timezone: () => brandingStore.branding.timezone });
+  let transfers;
+  try { transfers = await new DataTransfers(vault, brandingStore).open(); }
+  catch (error) { await logMaintenance.close(); await workflowEngine.close(); await vault.close(); throw error; }
   const sessions = new Map();
   const attempts = new Map();
   const cookieSecure = options.cookieSecure ?? Boolean(options.tls);
   const cookieName = 'timeline_session';
   let authBusy = false;
   let closing = false;
-  let resetBusy = false, resetIncomplete = false;
+  let resetBusy = false, resetIncomplete = false, restoreIncomplete = false;
   const resetAttempts = new Map(), activeRequests = new Set();
   let markerCheck = null;
   function checkSetupMarker() {
     if (markerCheck) return markerCheck;
-    if (closing || resetBusy || authBusy || resetIncomplete) return Promise.resolve();
+    if (closing || resetBusy || authBusy || resetIncomplete || restoreIncomplete) return Promise.resolve();
     markerCheck = (async () => {
       const requested = await operatorResetRequested(vault);
       if (!requested || closing || resetBusy || authBusy) return;
       resetBusy = true;
       try {
         await beginSystemReset(vault);
+        await transfers.clear();
         await Promise.all([Promise.all([...activeRequests]), workflowEngine.pause(true), logMaintenance.pause()]);
+        await transfers.clear();
         await finishSystemReset(vault, brandingStore);
         sessions.clear(); attempts.clear(); resetAttempts.clear(); resetIncomplete = false;
         workflowEngine.resume(true); logMaintenance.resume(true);
@@ -114,6 +123,7 @@ export async function createApp(options = {}) {
 
   const handler = async (req, res) => {
     let releaseRequest;
+    req.setTimeout(30000);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -124,8 +134,11 @@ export async function createApp(options = {}) {
     try {
       if (closing) throw new AppError(503, '서버가 종료 중입니다.');
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      const transferMatch = /^\/api\/settings\/transfers\/([0-9a-f-]{36})(?:\/(upload|download|restore))?$/.exec(pathname);
+      const transferStatus = req.method === 'GET' && (pathname === '/api/settings/transfers' || transferMatch && !transferMatch[2]);
       if (pathname === '/' || pathname.startsWith('/api/')) await checkSetupMarker();
       if (resetIncomplete && ['/api/status', '/api/branding'].includes(pathname)) throw new AppError(503, '시스템 초기화를 완료하지 못했습니다. 파일 권한을 확인하고 서버를 재시작해 주세요.');
+      if (restoreIncomplete && !transferStatus) throw new AppError(503, '데이터 복원 적용이 중단되었습니다. 파일 권한과 남은 공간을 확인하고 서버를 재시작하면 복원을 완료합니다.');
       if (req.method === 'GET' && ASSETS.has(pathname)) {
         const [file, type] = ASSETS.get(pathname);
         let content = await readFile(path.join(ROOT, 'public', file));
@@ -144,8 +157,8 @@ export async function createApp(options = {}) {
         return send(res, 200, { initialized: vault.initialized, authenticated: Boolean(session(req)), unlocked: vault.unlocked });
       }
       if (!pathname.startsWith('/api/')) throw new AppError(404, '페이지를 찾을 수 없습니다.');
-      if (resetBusy || (resetIncomplete && pathname !== '/api/settings/reset')) throw new AppError(503, '초기화 처리 중입니다. 잠시 후 다시 시도해 주세요.');
-      if (pathname !== '/api/settings/reset') {
+      if (resetBusy && !transferStatus || (resetIncomplete && pathname !== '/api/settings/reset')) throw new AppError(503, '데이터 초기화 또는 복원 처리 중입니다. 잠시 후 다시 시도해 주세요.');
+      if (pathname !== '/api/settings/reset' && !(transferMatch?.[2] === 'restore' && req.method === 'POST')) {
         const pending = new Promise(resolve => { releaseRequest = () => { activeRequests.delete(pending); resolve(); }; });
         activeRequests.add(pending);
       }
@@ -195,6 +208,55 @@ export async function createApp(options = {}) {
       }
       const token = session(req);
       if (!token) throw new AppError(401, '로그인이 필요합니다.');
+      if (pathname === '/api/settings/transfers' && req.method === 'GET') return send(res, 200, transfers.list(token));
+      if (req.method === 'POST' && ['/api/settings/transfers/export', '/api/settings/transfers/import'].includes(pathname)) {
+        const job = await transfers.create(pathname.endsWith('/export') ? 'export' : 'import', token, await json(req));
+        return send(res, 202, transfers.view(job));
+      }
+      if (transferMatch) {
+        const job = transfers.get(transferMatch[1], token), action = transferMatch[2];
+        if (!action && req.method === 'GET') return send(res, 200, transfers.view(job));
+        if (!action && req.method === 'DELETE') { await transfers.remove(job); return send(res, 200, { ok: true }); }
+        if (action === 'upload' && req.method === 'PUT') return send(res, 202, await transfers.upload(job, req));
+        if (action === 'download' && req.method === 'GET') { await transfers.download(job, res); return; }
+        if (action === 'restore' && req.method === 'POST') {
+          const body = await json(req), peer = req.socket.remoteAddress, now = Date.now();
+          transfers.canRestore(job);
+          if (job.status === 'completed' || job.status === 'restoring') return send(res, 202, transfers.view(job));
+          if (resetBusy || body.confirmed !== true) throw new AppError(409, '복원 확인 여부와 진행 중인 작업을 확인해 주세요.');
+          let attempt = resetAttempts.get(peer);
+          if (!attempt || attempt.until <= now) { attempt = { count: 0, until: now + 300000 }; resetAttempts.set(peer, attempt); }
+          if (attempt.count >= 5) throw new AppError(429, '비밀번호 확인 시도가 많습니다. 5분 후 다시 시도해 주세요.');
+          resetBusy = true;
+          try {
+            attempt.count++; await vault.verifyPassword(body.password); body.password = null; resetAttempts.delete(peer);
+            if (!session(req)) throw new AppError(401, '로그인이 필요합니다.');
+            const result = transfers.restore(job, async () => {
+              try {
+                await transfers.clearExcept(job.id);
+                await Promise.all([...activeRequests]);
+                if (!session(req)) throw new AppError(401, '로그인이 만료되어 복원을 적용하지 않았습니다. 다시 로그인해 주세요.');
+                await Promise.all([workflowEngine.pause(true), logMaintenance.pause()]);
+                const publicBranding = await vault.serialize(() => publishRestore(vault, brandingStore, path.join(job.directory, 'prepared')));
+                sessions.clear(); sessions.set(token, Date.now() + SESSION_AGE); attempts.clear(); resetAttempts.clear();
+                workflowEngine.resume(true); logMaintenance.resume(true);
+                let warning;
+                try {
+                  await workflowEngine.unlock();
+                  await vault.mutate(state => recordChange(state, 'data-restored', null, { archiveCreatedAt: job.result.createdAt, counts: job.result.counts }), { scope: {} });
+                } catch { warning = '데이터를 복원했지만 실행 상태 또는 복원 감사 기록을 마무리하지 못했습니다. 서버를 재시작해 확인해 주세요.'; workflowEngine.fault = warning; }
+                return { target: 'restore', publicBranding, warning };
+              } catch (error) {
+                restoreIncomplete = await hasPendingRestore(vault);
+                if (restoreIncomplete) throw new AppError(503, '복원 적용이 중단되었습니다. 파일 권한과 남은 공간을 확인하고 서버를 재시작하면 완료합니다.');
+                throw error;
+              } finally { if (!restoreIncomplete) { workflowEngine.resume(); logMaintenance.resume(); } resetBusy = false; }
+            });
+            return send(res, 202, result);
+          } catch (error) { resetBusy = false; throw error; }
+          finally { body.password = null; }
+        }
+      }
       if (pathname === '/api/settings/reset' && req.method === 'POST') {
         const body = await json(req), peer = req.socket.remoteAddress, now = Date.now();
         if (resetBusy) throw new AppError(409, '다른 초기화를 처리 중입니다.');
@@ -206,7 +268,9 @@ export async function createApp(options = {}) {
         try {
           attempt.count++;
           await vault.verifyPassword(body.password); body.password = null; resetAttempts.delete(peer);
+          await transfers.clear();
           await Promise.all([...activeRequests]);
+          await transfers.clear();
           if (!session(req)) throw new AppError(401, '로그인이 필요합니다.');
           let result;
           if (resetIncomplete) {
@@ -267,6 +331,7 @@ export async function createApp(options = {}) {
         if (req.method === 'PUT') return send(res, 200, await vault.saveServices(await json(req)));
       }
       if (req.method === 'POST' && pathname === '/api/logout') {
+        await transfers.clearOwner(token);
         sessions.delete(token);
         setCookie(res, '', 0);
         return send(res, 200, { ok: true });
@@ -291,7 +356,8 @@ export async function createApp(options = {}) {
   };
 
   const server = options.tls ? https.createServer(options.tls, handler) : http.createServer(handler);
-  server.requestTimeout = 30_000;
+  // ZIP uploads stream to disk and may take much longer than ordinary JSON requests.
+  server.requestTimeout = 2 * 60 * 60 * 1000;
   server.headersTimeout = 15_000;
   server.maxHeadersCount = 50;
   const maintenance = setInterval(() => {
@@ -305,7 +371,7 @@ export async function createApp(options = {}) {
   markerTimer.unref();
 
   return {
-    server, vault, workflows, workflowEngine, logMaintenance, get branding() { return brandingStore.branding; },
+    server, vault, workflows, workflowEngine, logMaintenance, transfers, get branding() { return brandingStore.branding; },
     async listen(port = 8787, host = '127.0.0.1') {
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       return server.address();
@@ -315,6 +381,7 @@ export async function createApp(options = {}) {
       clearInterval(maintenance);
       clearInterval(markerTimer);
       sessions.clear();
+      await transfers.close();
       if (server.listening) await new Promise(resolve => server.close(resolve));
       await markerCheck?.catch(() => {});
       await brandingStore.queue;

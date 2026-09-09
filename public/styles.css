@@ -1931,6 +1931,15 @@ svg.icon {
 .danger-row h4 { margin:0 0 8px; font-size:14px; }
 .danger-row p, .reset-description { margin:0; color:var(--muted); font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
 .danger-row .button { flex-shrink:0; }
+.danger-row > div { min-width:0; }
+#data-transfer-actions { margin-bottom:20px; }
+.transfer-controls { display:flex; flex-shrink:0; flex-direction:column; align-items:flex-end; gap:10px; max-width:48%; }
+.transfer-controls .transfer-file { max-width:100%; white-space:normal; word-break:keep-all; overflow-wrap:anywhere; text-align:center; text-decoration:none; }
+.danger-row .transfer-status:not(:empty) { margin-top:10px; }
+.danger-row .transfer-status.form-error { color:var(--red); }
+.danger-row progress { display:block; width:100%; max-width:320px; height:7px; margin-top:10px; accent-color:var(--green); }
+.danger-row [hidden] { display:none; }
+@media(max-width:760px) { .transfer-controls { align-items:flex-start; max-width:100%; } }
 .reset-description { margin-bottom:20px; }
 .reset-dialog { max-width:500px; }
 @media(max-width:760px) { .danger-row { align-items:flex-start; flex-direction:column; padding:16px; gap:12px; } }
