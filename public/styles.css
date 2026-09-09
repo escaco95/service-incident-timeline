@@ -18,6 +18,7 @@
   --amber-pill:#faeab7;
   --amber-pill-inactive:#e6cd85;
   --amber-badge-text:#67450f;
+  --badge-hatch:rgb(255 255 255 / 18%);
   --grid-line:#ebefe6;
   --label-width:228px;
   font-family:Inter,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
@@ -44,6 +45,7 @@
   --amber-pill:#57451d;
   --amber-pill-inactive:#332b1c;
   --amber-badge-text:var(--amber);
+  --badge-hatch:rgb(255 255 255 / 7%);
   --grid-line:#2e3c34
 }
 
@@ -771,7 +773,8 @@ svg.icon {
 .event-time-day {
   position:relative;
   min-width:0;
-  background:var(--badge-inactive)
+  background-color:var(--badge-inactive);
+  background-image:repeating-linear-gradient(135deg,transparent 0 7px,var(--badge-hatch) 7px 8px)
 }
 
 .event-time-day:first-child {
