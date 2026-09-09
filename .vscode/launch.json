@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "서버: 로컬 디버그",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/server.mjs",
+      "cwd": "${workspaceFolder}",
+      "runtimeArgs": ["--env-file-if-exists=.env"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "serverReadyAction": {
+        "pattern": ": (https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    }
+  ]
+}

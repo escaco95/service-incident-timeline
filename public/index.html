@@ -9,31 +9,42 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/audit.css">
+  <link rel="stylesheet" href="/workflow.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">본문으로 이동</a>
   <div id="root"><div class="boot-screen"><img src="/favicon.svg" width="44" height="44" alt=""><p>서비스 기록을 준비하고 있습니다.</p></div></div>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div class="notifications">
+    <section id="connection-notice" class="connection-notice" aria-label="서버 연결 상태" hidden>
+      <div id="connection-details">
+        <div class="connection-heading"><strong><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5M12 17v.2"/></svg>서버 연결 확인 필요</strong><button type="button" class="connection-collapse" data-action="connection-collapse" aria-label="연결 오류 안내 접기" title="접기">−</button></div>
+        <p>최신 기록을 불러오지 못했습니다.<br>자동으로 다시 확인합니다.</p>
+        <button type="button" id="connection-retry" class="connection-retry" data-action="connection-retry" aria-disabled="false">지금 다시 시도</button>
+      </div>
+      <button type="button" id="connection-expand" class="connection-expand" data-action="connection-expand" aria-label="연결 오류 안내 펼치기" hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5M12 17v.2"/></svg><span>서버 연결 확인 필요</span><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg></button>
+    </section>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <div id="connection-announcement" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <dialog id="event-dialog" class="dialog event-dialog" aria-labelledby="event-dialog-title">
     <form id="event-form">
-      <div class="dialog-heading"><div><p class="eyebrow">EVENT RECORD</p><h2 id="event-dialog-title">이벤트 추가</h2></div><button type="button" class="icon-button" data-close="event-dialog" aria-label="닫기">×</button></div>
+      <div class="dialog-heading"><div><p class="eyebrow">EVENT RECORD</p><h2 id="event-dialog-title">이벤트 추가</h2></div><button type="button" class="icon-button" data-close="event-dialog" aria-label="닫기"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 5 14 14M19 5 5 19"/></svg></button></div>
       <label class="field">이벤트 제목 <span class="required">*</span><input name="title" required maxlength="120" placeholder="어떤 일이 있었나요?" autocomplete="off"></label>
-      <label class="field">유형<select name="category"><option value="maintenance">점검</option><option value="instability">불안정</option><option value="incident">장애</option></select></label>
+      <label class="field">유형<select name="category"><option value="maintenance">점검·불안정 (YELLOW)</option><option value="incident">장애 (RED)</option></select></label>
       <fieldset class="service-picker"><legend>서비스 <span class="optional">복수 선택·직접 입력</span></legend><div id="event-services" class="service-tags"></div><div class="service-search"><input name="service" maxlength="80" placeholder="서비스 검색 또는 직접 입력" autocomplete="off" aria-label="서비스 검색 또는 직접 입력"><button type="button" class="button secondary" id="service-custom-add">직접 추가</button></div><div id="service-suggestions" class="service-suggestions" role="group" aria-label="서비스 제안 목록"></div><p id="service-picker-status" class="form-hint" role="status"></p></fieldset>
       <div class="field-row">
         <fieldset class="field datetime-field"><legend>시작 시각 <span class="required">*</span></legend>
           <input name="startDate" type="date" min="1900-01-01" max="9998-12-31" aria-label="시작 날짜" required>
           <div class="time-controls"><select name="startHour" aria-label="시작 시 (00~23)" required></select><span aria-hidden="true">:</span><select name="startMinute" aria-label="시작 분 (00~59)" required></select></div>
         </fieldset>
-        <fieldset class="field datetime-field" id="end-fields"><legend>종료 시각</legend>
+        <fieldset class="field datetime-field" id="end-fields"><legend><span class="datetime-heading"><span>종료 시각</span><label class="check-field open-ended-toggle"><span>미정</span><input name="openEnded" type="checkbox" aria-label="종료 시각 미정"></label></span></legend>
           <input name="endDate" type="date" min="1900-01-01" max="9998-12-31" aria-label="종료 날짜" required>
           <div class="time-controls"><select name="endHour" aria-label="종료 시 (00~23)" required></select><span aria-hidden="true">:</span><select name="endMinute" aria-label="종료 분 (00~59)" required></select></div>
         </fieldset>
       </div>
-      <label class="check-field"><input name="openEnded" type="checkbox"><span>종료 시각 미정 <span class="infinity">∞</span></span></label>
-      <details class="event-operations"><summary>상태 계산 설정</summary><p class="form-hint">예상 상태를 계산하는 기능입니다. 외부 서비스는 변경하지 않습니다.</p><label class="check-field"><input name="calculationEnabled" type="checkbox"><span>이 이벤트를 상태 계산에 포함</span></label><div class="field-row"><label class="field">상태 영향<select name="impact"><option value="">선택하지 않음</option></select></label><label class="field">종료 방식<select name="endMode"><option value="scheduled">종료 시각에 종료</option><option value="confirmed">운영자 확인까지 유지</option></select></label></div><p id="confirmed-end-status" class="form-hint"></p><label class="check-field"><input name="confirmAuthorization" type="checkbox"><span>선택한 대상·일정·영향·종료 방식과 현재 정책을 확인했습니다.</span></label></details>
       <label class="field">상세 내용 <span class="optional">선택</span><textarea name="description" rows="4" maxlength="4000" placeholder="영향 범위, 조치 내용, 참고할 사항을 기록하세요."></textarea></label>
       <p class="form-hint" id="event-timezone"></p>
       <p class="form-error" id="event-error" role="alert" hidden></p>
@@ -42,34 +53,89 @@
   </dialog>
 
   <dialog id="branding-dialog" class="dialog branding-dialog" aria-labelledby="branding-title">
-    <form id="branding-form">
-      <div class="dialog-heading"><h2 id="branding-title">브랜딩 설정</h2><button type="button" class="icon-button" data-close="branding-dialog" aria-label="닫기">×</button></div>
-      <p class="branding-description">모든 사용자가 함께 사용하는 이름과 표시 기본값입니다.</p>
-      <div class="operations-links"><button type="button" class="button secondary" id="open-operations-settings">서비스 제안 목록·상태 정책</button><button type="button" class="button secondary" id="open-state-preview">대상별 상태 미리보기</button></div>
-      <p id="branding-loading" class="form-hint" role="status" hidden>설정을 불러오고 있습니다…</p>
-      <fieldset id="branding-fields" class="branding-fields" disabled>
-        <label class="field">서비스 이름 <span class="required">*</span><input name="name" required maxlength="64" autocomplete="off" placeholder="예: Payment Timeline"></label>
-        <label class="field">부제 <span class="optional">선택</span><input name="subtitle" maxlength="80" autocomplete="off" placeholder="예: 결제 서비스 운영 기록"></label>
-        <label class="check-field"><input name="showSubtitle" type="checkbox"><span>부제 표시</span></label>
-        <div class="field-row">
-          <label class="field">기본 테마<select name="defaultTheme"><option value="light">라이트</option><option value="dark">다크</option></select></label>
-          <label class="field">표시 시간대<select name="timezone" required><option value="UTC">UTC</option><option value="Asia/Seoul">Asia/Seoul</option><option value="Asia/Tokyo">Asia/Tokyo</option><option value="America/New_York">America/New_York</option><option value="America/Los_Angeles">America/Los_Angeles</option><option value="Europe/London">Europe/London</option><option value="custom">직접 입력…</option></select></label>
+    <div class="dialog-heading settings-heading"><h2 id="branding-title">시스템 설정</h2><button type="button" class="icon-button" data-close="branding-dialog" aria-label="닫기"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 5 14 14M19 5 5 19"/></svg></button></div>
+    <div class="settings-layout">
+      <aside class="settings-sidebar">
+        <p class="settings-nav-label" id="settings-groups-label">설정 그룹</p>
+        <div class="settings-nav" role="tablist" aria-labelledby="settings-groups-label" aria-orientation="vertical">
+          <button type="button" class="settings-group" id="system-settings-tab" role="tab" data-settings-group="branding" aria-controls="branding-panel" aria-selected="true">시스템 설정</button>
+          <button type="button" class="settings-group" id="open-services-settings" role="tab" data-settings-group="services" aria-controls="services-panel" aria-selected="false" tabindex="-1">서비스 제안 목록</button>
+          <button type="button" class="settings-group" id="log-policy-tab" role="tab" data-settings-group="log-policy" aria-controls="log-policy-panel" aria-selected="false" tabindex="-1">로그 관리 정책</button>
+          <button type="button" class="settings-group danger-tab" id="danger-zone-tab" role="tab" data-settings-group="danger-zone" aria-controls="danger-zone-panel" aria-selected="false" tabindex="-1">Danger Zone</button>
         </div>
-        <label class="field" id="branding-custom-timezone" hidden>시간대 직접 입력<input name="customTimezone" maxlength="100" autocomplete="off" spellcheck="false" placeholder="예: Australia/Sydney" disabled></label>
-        <p class="form-hint">기본 테마는 개인 테마를 선택하지 않은 사용자에게 적용됩니다. 시간대를 바꾸면 이벤트의 표시·입력 시각도 함께 바뀝니다.</p>
-      </fieldset>
-      <p id="branding-error" class="form-error" role="alert" hidden></p>
-      <button type="button" id="branding-reload" class="button secondary" hidden>최신 설정 불러오기</button>
-      <div class="dialog-actions"><button class="button secondary" type="button" data-close="branding-dialog">취소</button><button class="button primary" id="branding-save" type="submit" disabled>설정 저장</button></div>
-    </form>
+      </aside>
+      <div class="settings-content">
+        <section id="branding-panel" class="settings-panel" role="tabpanel" aria-labelledby="system-settings-tab">
+          <h3 class="settings-panel-title">시스템 설정</h3>
+          <p class="branding-description">모든 사용자가 함께 사용하는 이름과 표시 기본값입니다.</p>
+          <form id="branding-form">
+            <p id="branding-loading" class="form-hint" role="status" hidden>설정을 불러오고 있습니다…</p>
+            <fieldset id="branding-fields" class="branding-fields" disabled>
+              <label class="field">서비스 이름 <span class="required">*</span><input name="name" required maxlength="64" autocomplete="off" placeholder="예: Payment Timeline"></label>
+              <label class="field">부제 <span class="optional">선택</span><input name="subtitle" maxlength="80" autocomplete="off" placeholder="예: 결제 서비스 운영 기록"></label>
+              <label class="check-field"><input name="showSubtitle" type="checkbox"><span>부제 표시</span></label>
+              <div class="field-row">
+                <label class="field">기본 테마<select name="defaultTheme"><option value="light">라이트</option><option value="dark">다크</option></select></label>
+                <label class="field">표시 시간대<select name="timezone" required><option value="UTC">UTC</option><option value="Asia/Seoul">Asia/Seoul</option><option value="Asia/Tokyo">Asia/Tokyo</option><option value="America/New_York">America/New_York</option><option value="America/Los_Angeles">America/Los_Angeles</option><option value="Europe/London">Europe/London</option><option value="custom">직접 입력…</option></select></label>
+              </div>
+              <label class="field" id="branding-custom-timezone" hidden>시간대 직접 입력<input name="customTimezone" maxlength="100" autocomplete="off" spellcheck="false" placeholder="예: Australia/Sydney" disabled></label>
+              <p class="form-hint">기본 테마는 개인 테마를 선택하지 않은 사용자에게 적용됩니다. 시간대를 바꾸면 이벤트의 표시·입력 시각도 함께 바뀝니다.</p>
+              <label class="field">비밀번호 안내문 <span class="optional">선택</span><textarea name="passwordNotice" rows="3" maxlength="2000" aria-describedby="password-notice-hint" placeholder="예: 비밀번호는 운영 담당자에게 문의해 주세요."></textarea></label>
+              <p id="password-notice-hint" class="form-hint">로그인 화면에 표시됩니다. http:// 또는 https:// URL만 입력하면 새 탭에서 열리는 링크로 표시되며, 비워 두면 숨겨집니다.</p>
+            </fieldset>
+            <p id="branding-error" class="form-error" role="alert" hidden></p>
+            <button type="button" id="branding-reload" class="button secondary" hidden>최신 설정 불러오기</button>
+            <div class="dialog-actions"><button class="button secondary" type="button" data-close="branding-dialog">취소</button><button class="button primary" id="branding-save" type="submit" disabled>설정 저장</button></div>
+          </form>
+        </section>
+        <section id="services-panel" class="settings-panel" role="tabpanel" aria-labelledby="open-services-settings" hidden>
+          <h3 class="settings-panel-title">서비스 제안 목록</h3>
+          <p class="branding-description">이벤트에 사용할 서비스 제안 목록을 관리합니다.</p>
+          <form id="services-form">
+            <fieldset id="services-fields" class="branding-fields" disabled>
+              <h4 class="settings-section-title">서비스 목록</h4>
+              <p class="form-hint">이벤트에서 선택할 서비스 이름을 관리합니다. 화살표로 순서를 바꾸고, 사용하지 않는 항목은 비활성화하세요.</p>
+              <div id="services-catalog"></div>
+              <button type="button" class="button secondary" id="catalog-add">서비스 추가</button>
+            </fieldset>
+            <p id="services-error" class="form-error" role="alert" hidden></p>
+            <div class="dialog-actions"><button type="button" class="button secondary" id="services-reload">다시 불러오기</button><button type="submit" class="button primary" id="services-save" disabled>설정 저장</button></div>
+          </form>
+        </section>
+        <section id="danger-zone-panel" class="settings-panel" role="tabpanel" aria-labelledby="danger-zone-tab" hidden>
+          <h3 class="settings-panel-title danger-title">Danger Zone</h3>
+          <p class="branding-description">초기화할 대상을 확인한 뒤 현재 비밀번호를 다시 입력해야 합니다. 삭제한 데이터는 화면에서 복구할 수 없습니다.</p>
+          <div id="danger-zone-actions" class="danger-zone-actions"></div>
+        </section>
+        <section id="log-policy-panel" class="settings-panel" role="tabpanel" aria-labelledby="log-policy-tab" hidden>
+          <h3 class="settings-panel-title">로그 관리 정책</h3>
+          <p class="branding-description">정해진 일정에 보관 기한이 지난 데이터를 삭제하고, 처리 결과를 감사 로그에 남깁니다.</p>
+          <form id="log-policy-form">
+            <p id="log-policy-loading" class="form-hint" role="status" hidden>정책을 불러오고 있습니다…</p>
+            <fieldset id="log-policy-fields" class="branding-fields" disabled>
+              <label class="field">실행 일정 (cron)<input name="cron" required maxlength="100" autocomplete="off" spellcheck="false" placeholder="0 3 * * *" aria-describedby="log-policy-cron-hint log-policy-timezone"></label>
+              <p id="log-policy-cron-hint" class="form-hint">분 · 시 · 일 · 월 · 요일 순서입니다. 예: 매일 03:00은 0 3 * * *, 30분마다는 */30 * * * *입니다.</p>
+              <p id="log-policy-timezone" class="form-hint"></p>
+              <label class="field">이벤트 데이터 보관 (일)<input type="number" name="eventRetentionDays" required min="30" max="3650" step="1" aria-describedby="log-policy-event-hint"></label>
+              <p id="log-policy-event-hint" class="form-hint">최소 30일 · 최대 3,650일 · 기본 1,825일. 종료일 기준으로 보관하며 종료 미정 이벤트는 제외합니다.</p>
+              <label class="field">감사 로그 로테이션 (일)<input type="number" name="auditRetentionDays" required min="7" max="180" step="1" aria-describedby="log-policy-audit-hint"></label>
+              <p id="log-policy-audit-hint" class="form-hint">최소 7일 · 최대 180일 · 기본 90일. 기한이 지난 날짜 파일을 삭제합니다. 진행 중인 워크플로우 실행 기록은 유지합니다.</p>
+            </fieldset>
+            <p class="form-hint">보관 기준일은 UTC 오늘에서 보관 일수를 뺀 날짜입니다. 기준일 이전의 파일을 삭제하며 당일 파일은 유지하므로 최대 하루 더 보관될 수 있습니다.</p>
+            <p class="form-hint">서버가 실행 중이고 로그인으로 저장소 잠금이 해제된 동안 동작합니다. 서버 중단 중 놓친 일정은 다음 예약 시각에 처리하며 미완료 파일 삭제는 다음 점검에서 재개합니다.</p>
+            <p id="log-policy-status" class="form-hint" role="status"></p>
+            <p id="log-policy-error" class="form-error" role="alert" hidden></p>
+            <div class="dialog-actions"><button type="button" class="button secondary" id="log-policy-reload">다시 불러오기</button><button type="submit" class="button primary" id="log-policy-save" disabled>설정 저장</button></div>
+          </form>
+        </section>
+      </div>
+    </div>
   </dialog>
 
-  <dialog id="operations-dialog" class="dialog operations-dialog" aria-labelledby="operations-title"><form id="operations-form"><div class="dialog-heading"><h2 id="operations-title">서비스 제안 목록·상태 정책</h2><button type="button" class="icon-button" data-close="operations-dialog" aria-label="닫기">×</button></div><p class="form-hint">로그인 후 사용하는 업무 설정입니다. 변경 내용은 암호화하여 저장합니다.</p><fieldset id="operations-fields" class="branding-fields" disabled><h3>서비스 제안 목록</h3><p class="form-hint">ID는 생성 후 유지됩니다. 사용하지 않는 항목은 비활성화하세요. 커넥터 ID는 담당자가 확정한 연결만 입력하세요.</p><div id="operations-services"></div><button type="button" class="button secondary" id="catalog-add">서비스 추가</button><h3>상태 정책</h3><p class="form-hint">우선순위가 큰 상태를 적용합니다. 화면의 이벤트 유형·색상과 별도로 계산합니다.</p><div id="operations-policy-states"></div><button type="button" class="button secondary" id="policy-state-add">상태 추가</button><div class="field-row"><label class="field">활성 이벤트가 없을 때의 기준 상태<select name="baseline"></select></label><label class="field">우선순위가 같을 때<select name="tieBreak"><option value="state-order">상태 목록의 앞 항목</option><option value="latest-start">나중에 시작한 이벤트</option></select></label></div><div id="operations-affected" class="form-hint"></div></fieldset><p id="operations-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button secondary" id="operations-reload">다시 불러오기</button><button type="submit" class="button primary" id="operations-save" disabled>업무 설정 저장</button></div></form></dialog>
-  <dialog id="state-preview-dialog" class="dialog operations-dialog" aria-labelledby="state-preview-title"><div class="dialog-heading"><h2 id="state-preview-title">대상별 상태 미리보기</h2><button class="icon-button" data-close="state-preview-dialog" aria-label="닫기">×</button></div><p class="form-hint">등록된 일정과 정책으로 계산한 예상입니다. 외부 서비스의 실제 상태를 조회하거나 변경하지 않습니다.</p><form id="state-preview-form"><div class="preview-time"><input name="date" type="date" required aria-label="평가 날짜"><select name="hour" aria-label="평가 시" required></select><span>:</span><select name="minute" aria-label="평가 분" required></select><select name="hours" aria-label="예상 기간"><option value="24">다음 24시간</option><option value="72">다음 3일</option><option value="168">다음 7일</option></select><button class="button secondary" type="submit">계산</button></div></form><p id="state-preview-error" class="form-error" role="alert" hidden></p><div id="state-preview-content"></div></dialog>
   <dialog id="detail-dialog" class="dialog detail-dialog" aria-labelledby="detail-title"><div id="detail-content"></div></dialog>
   <dialog id="overflow-dialog" class="dialog overflow-dialog" aria-labelledby="overflow-title"><div id="overflow-content"></div></dialog>
   <dialog id="delete-dialog" class="dialog delete-dialog" aria-labelledby="delete-title">
-    <div class="dialog-heading"><h2 id="delete-title">이벤트를 삭제할까요?</h2><button class="icon-button" data-close="delete-dialog" aria-label="닫기">×</button></div>
+    <div class="dialog-heading"><h2 id="delete-title">이벤트를 삭제할까요?</h2><button class="icon-button" data-close="delete-dialog" aria-label="닫기"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 5 14 14M19 5 5 19"/></svg></button></div>
     <p id="delete-description" class="delete-description"></p><p class="muted">삭제한 이벤트는 화면에서 복구할 수 없습니다.</p>
     <p class="form-error" id="delete-error" role="alert" hidden></p>
     <div class="dialog-actions"><button class="button secondary" data-close="delete-dialog">취소</button><button class="button danger" id="delete-confirm">이벤트 삭제</button></div>

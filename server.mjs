@@ -1,17 +1,29 @@
 import http from 'node:http';
 import https from 'node:https';
+import { Workflows } from './lib/workflows.mjs';
+import { WorkflowEngine } from './lib/workflow-engine.mjs';
+import { LogMaintenance } from './lib/log-maintenance.mjs';
+import { RESET_TARGETS, resetData, hasPendingSystemReset, beginSystemReset, finishSystemReset } from './lib/reset.mjs';
+import { enrollSetupMarker, operatorResetRequested } from './lib/setup-marker.mjs';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Vault, AppError } from './lib/vault.mjs';
-import { BrandingStore, brandingTitle, escapeHtml } from './lib/branding.mjs';
+import { Vault, AppError, checkPassword } from './lib/vault.mjs';
+import { BrandingStore, brandingTitle, escapeHtml, validateBranding } from './lib/branding.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
-  ['/operations-ui.js', ['operations-ui.js', 'text/javascript; charset=utf-8']],
+  ['/services-ui.js', ['services-ui.js', 'text/javascript; charset=utf-8']],
+  ['/log-policy-ui.js', ['log-policy-ui.js', 'text/javascript; charset=utf-8']],
+  ['/danger-zone-ui.js', ['danger-zone-ui.js', 'text/javascript; charset=utf-8']],
+  ['/audit-ui.js', ['audit-ui.js', 'text/javascript; charset=utf-8']],
+  ['/event-loader.js', ['event-loader.js', 'text/javascript; charset=utf-8']],
+  ['/audit.css', ['audit.css', 'text/css; charset=utf-8']],
+  ['/workflow-ui.js', ['workflow-ui.js', 'text/javascript; charset=utf-8']],
+  ['/workflow.css', ['workflow.css', 'text/css; charset=utf-8']],
   ['/theme.js', ['theme.js', 'text/javascript; charset=utf-8']],
   ['/date-utils.js', ['date-utils.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
@@ -20,14 +32,49 @@ const ASSETS = new Map([
 const SESSION_AGE = 8 * 60 * 60 * 1000;
 
 export async function createApp(options = {}) {
-  const brandingStore = await new BrandingStore(options.brandingFile ?? path.join(ROOT, 'branding.json')).open();
+  const brandingStore = new BrandingStore(options.brandingFile ?? path.join(ROOT, 'branding.json'));
   const vault = await new Vault(options.dataDir ?? path.join(ROOT, 'data')).open();
+  try {
+    if (await hasPendingSystemReset(vault)) await finishSystemReset(vault, brandingStore);
+    else {
+      await enrollSetupMarker(vault);
+      if (await operatorResetRequested(vault)) { await beginSystemReset(vault); await finishSystemReset(vault, brandingStore); }
+    }
+    await brandingStore.open();
+  }
+  catch (error) { await vault.close(); throw error; }
+  const workflows = new Workflows(vault, options.workflows);
+  const workflowEngine = new WorkflowEngine(vault, options.workflows);
+  const logMaintenance = new LogMaintenance(vault, { ...options.logMaintenance, timezone: () => brandingStore.branding.timezone });
   const sessions = new Map();
   const attempts = new Map();
   const cookieSecure = options.cookieSecure ?? Boolean(options.tls);
   const cookieName = 'timeline_session';
   let authBusy = false;
   let closing = false;
+  let resetBusy = false, resetIncomplete = false;
+  const resetAttempts = new Map(), activeRequests = new Set();
+  let markerCheck = null;
+  function checkSetupMarker() {
+    if (markerCheck) return markerCheck;
+    if (closing || resetBusy || authBusy || resetIncomplete) return Promise.resolve();
+    markerCheck = (async () => {
+      const requested = await operatorResetRequested(vault);
+      if (!requested || closing || resetBusy || authBusy) return;
+      resetBusy = true;
+      try {
+        await beginSystemReset(vault);
+        await Promise.all([Promise.all([...activeRequests]), workflowEngine.pause(true), logMaintenance.pause()]);
+        await finishSystemReset(vault, brandingStore);
+        sessions.clear(); attempts.clear(); resetAttempts.clear(); resetIncomplete = false;
+        workflowEngine.resume(true); logMaintenance.resume(true);
+      } catch {
+        resetIncomplete = await hasPendingSystemReset(vault);
+        throw new AppError(503, '설정 완료 파일 삭제에 따른 초기화를 완료하지 못했습니다. 파일 권한을 확인한 뒤 서버를 재시작해 주세요.');
+      } finally { resetBusy = false; }
+    })().finally(() => { markerCheck = null; });
+    return markerCheck;
+  }
 
   function send(res, status, value) {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -62,6 +109,7 @@ export async function createApp(options = {}) {
   }
 
   const handler = async (req, res) => {
+    let releaseRequest;
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -72,6 +120,8 @@ export async function createApp(options = {}) {
     try {
       if (closing) throw new AppError(503, '서버가 종료 중입니다.');
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      if (pathname === '/' || pathname.startsWith('/api/')) await checkSetupMarker();
+      if (resetIncomplete && ['/api/status', '/api/branding'].includes(pathname)) throw new AppError(503, '시스템 초기화를 완료하지 못했습니다. 파일 권한을 확인하고 서버를 재시작해 주세요.');
       if (req.method === 'GET' && ASSETS.has(pathname)) {
         const [file, type] = ASSETS.get(pathname);
         let content = await readFile(path.join(ROOT, 'public', file));
@@ -90,6 +140,11 @@ export async function createApp(options = {}) {
         return send(res, 200, { initialized: vault.initialized, authenticated: Boolean(session(req)), unlocked: vault.unlocked });
       }
       if (!pathname.startsWith('/api/')) throw new AppError(404, '페이지를 찾을 수 없습니다.');
+      if (resetBusy || (resetIncomplete && pathname !== '/api/settings/reset')) throw new AppError(503, '초기화 처리 중입니다. 잠시 후 다시 시도해 주세요.');
+      if (pathname !== '/api/settings/reset') {
+        const pending = new Promise(resolve => { releaseRequest = () => { activeRequests.delete(pending); resolve(); }; });
+        activeRequests.add(pending);
+      }
       if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) throw new AppError(405, '지원하지 않는 요청입니다.');
       if (req.method !== 'GET') {
         const expected = options.publicOrigin ?? `${req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
@@ -111,44 +166,108 @@ export async function createApp(options = {}) {
         authBusy = true;
         attempt.count += 1;
         try {
-          if (pathname === '/api/setup') await vault.setup(body.password);
-          else await vault.unlock(body.password);
+          if (pathname === '/api/setup') {
+            if (vault.initialized) throw new AppError(409, '이미 설정된 서비스입니다. 로그인해 주세요.');
+            checkPassword(body.password);
+            if (body.passwordNotice !== undefined) {
+              const current = await brandingStore.read();
+              const branding = validateBranding({ ...current.branding, passwordNotice: body.passwordNotice });
+              // Save the optional public notice before initialization so a settings write
+              // failure leaves the setup form retryable. Omitted/unchanged notices need no write.
+              if (branding.passwordNotice !== current.branding.passwordNotice) {
+                await brandingStore.save({ branding, version: current.version });
+              }
+            }
+            await vault.setup(body.password);
+          } else await vault.unlock(body.password);
+          await workflowEngine.unlock().catch(() => { workflowEngine.fault = '이전 실행 상태를 저장하지 못했습니다. 일정은 사용할 수 있으며 자동 실행은 저장소 확인 후 서버를 재시작해 주세요.'; });
           sessions.delete(session(req));
           const token = randomBytes(32).toString('base64url');
           sessions.set(token, Date.now() + SESSION_AGE);
           setCookie(res, token);
           attempts.delete(peer);
-          return send(res, 200, { ok: true });
+          return send(res, 200, { ok: true, publicBranding: brandingStore.branding });
         } finally { body.password = null; authBusy = false; }
       }
       const token = session(req);
       if (!token) throw new AppError(401, '로그인이 필요합니다.');
+      if (pathname === '/api/settings/reset' && req.method === 'POST') {
+        const body = await json(req), peer = req.socket.remoteAddress, now = Date.now();
+        if (resetBusy) throw new AppError(409, '다른 초기화를 처리 중입니다.');
+        if (!RESET_TARGETS.includes(body.target) || body.confirmed !== true || typeof body.requestId !== 'string' || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.requestId)) throw new AppError(400, '초기화 대상과 확인 여부를 확인해 주세요.');
+        let attempt = resetAttempts.get(peer);
+        if (!attempt || attempt.until <= now) { attempt = { count: 0, until: now + 300000 }; resetAttempts.set(peer, attempt); }
+        if (attempt.count >= 5) { res.setHeader('Retry-After', String(Math.ceil((attempt.until - now) / 1000))); throw new AppError(429, '비밀번호 확인 시도가 많습니다. 5분 후 다시 시도해 주세요.'); }
+        resetBusy = true;
+        try {
+          attempt.count++;
+          await vault.verifyPassword(body.password); body.password = null; resetAttempts.delete(peer);
+          await Promise.all([...activeRequests]);
+          if (!session(req)) throw new AppError(401, '로그인이 필요합니다.');
+          let result;
+          if (resetIncomplete) {
+            if (body.target !== 'system') throw new AppError(409, '미완료 시스템 초기화를 먼저 완료해 주세요.');
+            await finishSystemReset(vault, brandingStore); workflowEngine.resume(true); logMaintenance.resume(true);
+            result = { ok: true, target: 'system', initialized: false, publicBranding: brandingStore.branding };
+          } else result = await resetData({ vault, branding: brandingStore, engine: workflowEngine, maintenance: logMaintenance }, body.target, body.requestId);
+          if (body.target === 'system') { resetIncomplete = false; sessions.clear(); attempts.clear(); setCookie(res, '', 0); }
+          return send(res, 200, result);
+        } catch (error) {
+          if (await hasPendingSystemReset(vault)) { resetIncomplete = true; throw new AppError(503, '시스템 초기화가 아직 완료되지 않았습니다. 같은 비밀번호로 다시 시도해 주세요. 서버 재시작 시에도 정리를 이어서 처리합니다.'); }
+          throw error;
+        } finally { body.password = null; resetBusy = false; }
+      }
+      if (pathname === '/api/workflows') {
+        if (req.method === 'GET') return send(res, 200, { ...workflows.list(), engine: workflowEngine.status() });
+        if (req.method === 'POST') return send(res, 201, await workflows.create(await json(req)));
+      }
+      const workflow = /^\/api\/workflows\/([0-9a-f-]{36})(?:\/(enabled|run))?$/.exec(pathname);
+      if (workflow) {
+        const id = workflow[1], action = workflow[2];
+        if (!action && req.method === 'GET') return send(res, 200, workflows.read(id));
+        if (!action && req.method === 'PUT') return send(res, 200, await workflows.save(id, await json(req)));
+        if (!action && req.method === 'DELETE') { const result = await workflows.remove(id, await json(req)); workflowEngine.stopWorkflow(id); return send(res, 200, result); }
+        if (action === 'enabled' && req.method === 'PUT') return send(res, 200, await workflows.enable(id, await json(req)));
+        if (action === 'run' && req.method === 'POST') {
+          if (workflowEngine.fault) throw new AppError(503, workflowEngine.fault);
+          const run = await workflows.run(id, await json(req)); workflowEngine.wake(); return send(res, 202, run);
+        }
+      }
+      const workflowRun = /^\/api\/workflow-runs\/([0-9a-f-]{36})(?:\/(rerun|cancel))?$/.exec(pathname);
+      if (workflowRun) {
+        const id = workflowRun[1], action = workflowRun[2];
+        if (!action && req.method === 'GET') return send(res, 200, await workflows.readRun(id));
+        if (action === 'rerun' && req.method === 'POST') {
+          if (workflowEngine.fault) throw new AppError(503, workflowEngine.fault);
+          const run = await workflows.rerun(id, await json(req)); workflowEngine.wake(); return send(res, 202, run);
+        }
+        if (action === 'cancel' && req.method === 'POST') { const run = await workflows.cancel(id); workflowEngine.stop(id); return send(res, 200, run); }
+      }
+      if (req.method === 'GET' && pathname === '/api/audit') return send(res, 200, await vault.audit(new URL(req.url, 'http://localhost').searchParams));
       if (pathname === '/api/settings/branding') {
         if (req.method === 'GET') return send(res, 200, await brandingStore.read());
         if (req.method === 'PUT') return send(res, 200, await brandingStore.save(await json(req)));
       }
-      if (pathname === '/api/operations/settings') {
-        if (req.method === 'GET') return send(res, 200, vault.readOperations());
-        if (req.method === 'PUT') return send(res, 200, await vault.saveOperations(await json(req)));
+      if (pathname === '/api/settings/log-policy') {
+        if (req.method === 'GET') return send(res, 200, logMaintenance.read());
+        if (req.method === 'PUT') return send(res, 200, await logMaintenance.save(await json(req)));
       }
-      if (req.method === 'POST' && pathname === '/api/operations/preview') return send(res, 200, vault.preview(await json(req)));
-      if (req.method === 'GET' && pathname === '/api/operations/changes') {
-        const query = new URL(req.url, 'http://localhost').searchParams;
-        return send(res, 200, vault.changes(Number(query.get('offset') ?? 0), Number(query.get('limit') ?? 50)));
+      if (pathname === '/api/services') {
+        if (req.method === 'GET') return send(res, 200, vault.readServices());
+        if (req.method === 'PUT') return send(res, 200, await vault.saveServices(await json(req)));
       }
-      const confirmation = /^\/api\/events\/([0-9a-f-]{36})\/confirm-end$/.exec(pathname);
-      if (req.method === 'POST' && confirmation) return send(res, 200, await vault.confirmEnd(confirmation[1], (await json(req)).version));
       if (req.method === 'POST' && pathname === '/api/logout') {
         sessions.delete(token);
         setCookie(res, '', 0);
         return send(res, 200, { ok: true });
       }
       if (pathname === '/api/events') {
-        if (req.method === 'GET') return send(res, 200, vault.read());
+        if (req.method === 'GET') return send(res, 200, await vault.read(new URL(req.url, 'http://localhost').searchParams));
         if (req.method === 'POST') return send(res, 201, await vault.add(await json(req)));
       }
       const match = /^\/api\/events\/([0-9a-f-]{36})$/.exec(pathname);
       if (match) {
+        if (req.method === 'GET') return send(res, 200, { event: await vault.getRecord('events', match[1]), revision: vault.state.revision });
         const body = await json(req);
         if (req.method === 'PUT') return send(res, 200, await vault.update(match[1], body));
         if (req.method === 'DELETE') return send(res, 200, await vault.remove(match[1], body.version));
@@ -158,7 +277,7 @@ export async function createApp(options = {}) {
       if (res.headersSent) { res.destroy(); return; }
       // Do not log request bodies, event data, passwords, keys or crypto errors.
       send(res, error.status ?? 500, { error: error.status ? error.message : '저장 또는 처리에 실패했습니다. 원본 데이터는 초기화하지 않았습니다.' });
-    }
+    } finally { releaseRequest?.(); }
   };
 
   const server = options.tls ? https.createServer(options.tls, handler) : http.createServer(handler);
@@ -169,11 +288,14 @@ export async function createApp(options = {}) {
     const now = Date.now();
     for (const [token, expires] of sessions) if (expires <= now) sessions.delete(token);
     for (const [peer, attempt] of attempts) if (attempt.until <= now) attempts.delete(peer);
+    for (const [peer, attempt] of resetAttempts) if (attempt.until <= now) resetAttempts.delete(peer);
   }, 60_000);
   maintenance.unref();
+  const markerTimer = setInterval(() => { checkSetupMarker().catch(() => {}); }, 1000);
+  markerTimer.unref();
 
   return {
-    server, vault, get branding() { return brandingStore.branding; },
+    server, vault, workflows, workflowEngine, logMaintenance, get branding() { return brandingStore.branding; },
     async listen(port = 8787, host = '127.0.0.1') {
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       return server.address();
@@ -181,9 +303,13 @@ export async function createApp(options = {}) {
     async close() {
       closing = true;
       clearInterval(maintenance);
+      clearInterval(markerTimer);
       sessions.clear();
       if (server.listening) await new Promise(resolve => server.close(resolve));
+      await markerCheck?.catch(() => {});
       await brandingStore.queue;
+      await logMaintenance.close();
+      await workflowEngine.close();
       await vault.close();
     }
   };

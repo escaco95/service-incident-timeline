@@ -15,10 +15,12 @@ const output = path.join(temporaryRoot, 'screenshots');
 await fs.mkdir(output, { recursive: true });
 const executable = process.env.BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 await fs.access(executable);
-const branding = { name: 'Payment & Ops', subtitle: '결제 서비스 운영 기록', defaultTheme: 'dark', timezone: 'Asia/Seoul' };
+const branding = { name: 'Payment & Ops', subtitle: '결제 서비스 운영 기록', defaultTheme: 'dark', timezone: 'Asia/Seoul', passwordNotice: '' };
+const initialNotice = '기존 안내\n</textarea><img src=x onerror="window.noticeXss=true">';
+const setupNotice = 'https://support.example/password?team=ops&lang=ko';
 const brandingFile = path.join(runDir, 'branding.json');
-await fs.writeFile(brandingFile, JSON.stringify(branding));
-const app = await createApp({ dataDir: path.join(runDir, 'data'), brandingFile });
+await fs.writeFile(brandingFile, JSON.stringify({ ...branding, passwordNotice: initialNotice }));
+const app = await createApp({ dataDir: path.join(runDir, 'data'), brandingFile, logMaintenance: { autoStart: false } });
 const address = await app.listen(0);
 const base = `http://127.0.0.1:${address.port}`;
 const password = 'browser-test-only-2026-암호';
@@ -29,6 +31,8 @@ let requestId = 0;
 const pending = new Map();
 const errors = [];
 const mutations = [];
+const auditQueries = [];
+const serviceQueries = [];
 async function until(check, message, timeout = 10000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check()) return; await delay(70); }
@@ -48,13 +52,27 @@ async function evaluate(expression) {
   return result.result.value;
 }
 async function waitFor(expression, message) { await until(() => evaluate(expression), message); }
+async function reloadPage() {
+  await evaluate('window.browserCheckReloadPending = true');
+  await command('Page.reload');
+  await until(async () => { try { return await evaluate('!window.browserCheckReloadPending && document.readyState === "complete"'); } catch { return false; } }, 'new page after reload');
+}
 async function screenshot(name, full = false) {
   const metrics = await command('Page.getLayoutMetrics');
   const clip = full ? { x: 0, y: 0, width: metrics.cssContentSize.width, height: metrics.cssContentSize.height, scale: 1 } : undefined;
   const image = await command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: full, ...(clip ? { clip } : {}) });
   await fs.writeFile(path.join(output, name + '.png'), Buffer.from(image.data, 'base64'));
 }
-async function click(expression) { await evaluate(`(${expression}).click()`); }
+async function click(expression) {
+  await evaluate(`(() => {
+    const target = (${expression});
+    const panel = target.closest('#user-menu-panel');
+    const openMenu = panel?.hidden && !document.querySelector('dialog[open]');
+    if (openMenu) document.querySelector('#user-menu-toggle').click();
+    target.click();
+    if (openMenu && target.dataset.action === 'theme-toggle') document.querySelector('#user-menu-toggle').click();
+  })()`);
+}
 
 async function pointerClick(expression) {
   const point = await evaluate(`(() => { const rect = (${expression}).getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; })()`);
@@ -143,8 +161,37 @@ async function checkCurrentTime(date, time, fraction, popup = false) {
   }
 }
 
-async function checkCalendarLayout({ weeks, fits, september = false }) {
+async function checkAppScroll(scrolls = false) {
   const layout = await evaluate(`(() => {
+    const content = document.querySelector('.app-content');
+    const initialScroll = content.scrollTop;
+    const initialTop = document.querySelector('.main').getBoundingClientRect().top;
+    content.scrollTop = content.scrollHeight;
+    const header = document.querySelector('.header').getBoundingClientRect();
+    const viewport = content.getBoundingClientRect();
+    const main = document.querySelector('.main').getBoundingClientRect();
+    const result = { headerTop: header.top, headerBottom: header.bottom, headerWidth: header.width,
+      contentTop: viewport.top, contentBottom: viewport.bottom, mainBottom: main.bottom,
+      moved: initialTop - main.top, scrollDelta: content.scrollTop - initialScroll, scrollTop: content.scrollTop,
+      page: document.documentElement.scrollHeight, pageScroll: window.scrollY, viewport: innerHeight, width: innerWidth };
+    content.scrollTop = initialScroll;
+    return result;
+  })()`);
+  assert.equal(layout.headerTop, 0, 'the header stays at the top while content scrolls');
+  assert.equal(layout.headerWidth, layout.width, 'the content scrollbar must not reduce the header width');
+  assert.equal(layout.headerBottom, layout.contentTop, 'the scrolling viewport starts below the header');
+  assert.equal(layout.contentBottom, layout.viewport);
+  assert.equal(layout.pageScroll, 0);
+  assert.ok(layout.page <= layout.viewport + 1, 'the document must not have a vertical scrollbar');
+  assert.ok(Math.abs(layout.moved - layout.scrollDelta) <= 1, 'scrolling moves only the body content');
+  if (scrolls) {
+    assert.ok(layout.scrollTop > 0, 'long content must remain scrollable');
+    assert.ok(layout.mainBottom <= layout.contentBottom + 1, 'the end of the body remains reachable');
+  }
+}
+
+async function checkCalendarLayout({ weeks, fits, september = false }) {
+  const readLayout = () => evaluate(`(() => {
     const calendar = document.querySelector('.calendar');
     const weeks = Array.from(calendar.querySelectorAll('.calendar-week'));
     const collisions = [];
@@ -164,18 +211,22 @@ async function checkCalendarLayout({ weeks, fits, september = false }) {
     const index = day ? Array.from(day.parentElement.children).indexOf(day) : -1;
     const visible = day ? Array.from(day.closest('.calendar-week').querySelectorAll('.event-badge')).filter(badge => Number(badge.dataset.start) <= index && Number(badge.dataset.end) >= index).length : 0;
     const hidden = Number(day?.querySelector('.day-more')?.textContent.match(/\\d+/)?.[0] || 0);
-    return { weeks: weeks.length, cells: calendar.querySelectorAll('.day-cell').length, height: weeks[0].getBoundingClientRect().height, page: document.documentElement.scrollHeight, viewport: innerHeight, width: document.documentElement.scrollWidth, viewportWidth: innerWidth, collisions, visible, hidden, lanes: Number(calendar.dataset.visibleLanes) };
+    const content = document.querySelector('.app-content');
+    return { weeks: weeks.length, cells: calendar.querySelectorAll('.day-cell').length, height: weeks[0].getBoundingClientRect().height, content: content.scrollHeight, available: content.clientHeight, viewport: innerHeight, width: document.documentElement.scrollWidth, viewportWidth: innerWidth, collisions, visible, hidden, lanes: Number(calendar.dataset.visibleLanes) };
   })()`);
+  let layout = await readLayout();
+  if (september) await until(async () => { layout = await readLayout(); return layout.visible + layout.hidden === 5; }, 'calendar events after period loading');
   assert.equal(layout.weeks, weeks);
   assert.equal(layout.cells, weeks * 7);
   assert.ok(layout.height >= 80, JSON.stringify(layout));
   assert.ok(layout.lanes >= 1 && layout.lanes <= 3);
   assert.deepEqual(layout.collisions, [], 'event badges must not overlap dates or overflow controls');
   assert.ok(layout.width <= layout.viewportWidth + 1, 'only the calendar may scroll horizontally');
-  if (fits) assert.ok(layout.page <= layout.viewport + 1, JSON.stringify(layout));
-  else assert.ok(layout.page > layout.viewport, 'short screens should retain readable cells and scroll');
+  if (fits) assert.ok(layout.content <= layout.available + 1, JSON.stringify(layout));
+  else assert.ok(layout.content > layout.available, 'short screens should retain readable cells and scroll within the body');
+  await checkAppScroll(!fits);
   if (september) assert.equal(layout.visible + layout.hidden, 5, 'all events remain reachable at every density');
-  console.log(`Calendar ${layout.viewportWidth}x${layout.viewport}: ${weeks} weeks, ${layout.height}px cells, ${layout.lanes} lanes, ${layout.page}px page`);
+  console.log(`Calendar ${layout.viewportWidth}x${layout.viewport}: ${weeks} weeks, ${layout.height}px cells, ${layout.lanes} lanes, ${layout.content}px content / ${layout.available}px available`);
   return layout;
 }
 
@@ -270,6 +321,8 @@ try {
     }
     if (data.method === 'Runtime.exceptionThrown') errors.push(data.params.exceptionDetails.exception?.description || data.params.exceptionDetails.text);
     if (data.method === 'Network.requestWillBeSent' && !['GET', 'HEAD'].includes(data.params.request.method)) mutations.push(data.params.request.url);
+    if (data.method === 'Network.requestWillBeSent' && new URL(data.params.request.url).pathname === '/api/audit') auditQueries.push(new URL(data.params.request.url).searchParams);
+    if (data.method === 'Network.requestWillBeSent' && data.params.request.method === 'GET' && new URL(data.params.request.url).pathname === '/api/services') serviceQueries.push(data.params.request.url);
   });
   await command('Runtime.enable');
   await command('Page.enable');
@@ -287,6 +340,10 @@ try {
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   await command('Page.navigate', { url: base });
   await waitFor('!!document.querySelector("#auth-form")', 'setup page');
+  assert.equal(await evaluate('document.querySelector("#auth-form").elements.passwordNotice.value'), initialNotice);
+  assert.equal(await evaluate('document.querySelector("#setup-notice-preview-content").textContent'), initialNotice);
+  assert.equal(await evaluate('document.querySelectorAll(".auth-card img").length'), 0);
+  assert.equal(await evaluate('!!window.noticeXss'), false);
   assert.equal(await evaluate('document.querySelector(".brand-name").textContent'), branding.name);
   assert.equal(await evaluate('document.title'), `${branding.name} · ${branding.subtitle}`);
   assert.ok(await evaluate(`document.querySelector('.auth-footer').textContent.startsWith(${JSON.stringify(branding.name)})`));
@@ -302,7 +359,7 @@ try {
   assert.equal(await evaluate(`localStorage.getItem('${themeKey}')`), 'light');
   assert.equal(await evaluate(`document.querySelector('#auth-form').elements.password.value`), 'unsaved-form-input');
   assert.equal(await evaluate(`${themeControl}.getAttribute('aria-checked')`), 'false');
-  await command('Page.reload');
+  await reloadPage();
   await waitFor('!!document.querySelector("#auth-form") && document.documentElement.dataset.theme === "light"', 'saved preference overrides dark branding after reload');
 
   // A second window of the same origin shares the preference with this window.
@@ -312,23 +369,62 @@ try {
   await waitFor('document.documentElement.dataset.theme === "dark"', 'theme preference sync across windows');
   await evaluate('window.themeTestTab.close(); delete window.themeTestTab');
   await evaluate(`localStorage.setItem('${themeKey}', 'invalid-theme')`);
-  await command('Page.reload');
+  await reloadPage();
   await waitFor('!!document.querySelector("#auth-form") && document.documentElement.dataset.theme === "dark"', 'invalid preference falls back to branding');
 
   const blockedStorage = await command('Page.addScriptToEvaluateOnNewDocument', { source: "Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Storage blocked', 'SecurityError'); } });" });
-  await command('Page.reload');
+  await reloadPage();
   await waitFor('!!document.querySelector("#auth-form")', 'storage blocked setup');
   assert.equal(await evaluate('document.documentElement.dataset.theme'), 'dark');
   await click(themeControl);
   assert.equal(await evaluate('document.documentElement.dataset.theme'), 'light', 'theme switching works with storage disabled');
   await command('Page.removeScriptToEvaluateOnNewDocument', { identifier: blockedStorage.identifier });
-  await command('Page.reload');
+  await reloadPage();
   await waitFor('!!document.querySelector("#auth-form") && document.documentElement.dataset.theme === "dark"', 'restore browser storage');
   await click(themeControl);
   assert.equal(mutations.length, 0, 'theme changes do not write to the server');
+  await evaluate(`(() => { const input = document.querySelector('#auth-form').elements.passwordNotice; input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert.equal(await evaluate('document.querySelector("#setup-notice-preview").hidden'), true);
+  await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.passwordNotice.value = ${JSON.stringify(setupNotice)}; form.elements.passwordNotice.dispatchEvent(new Event('input', { bubbles: true })); form.elements.password.value = ${JSON.stringify(password)}; form.elements.confirm.value = 'mismatched-password'; form.requestSubmit(); })()`);
+  assert.equal(await evaluate('document.querySelector("#auth-error").textContent'), '두 비밀번호가 일치하지 않습니다.');
+  assert.equal(mutations.length, 0, 'mismatched passwords do not submit setup');
+  assert.equal(await evaluate('document.querySelector("#setup-notice-preview a").href'), setupNotice);
+  assert.equal(await evaluate('document.querySelector("#setup-notice-preview a").target'), '_blank');
+  // A failed request keeps every draft field and the preview ready for retry.
+  await evaluate(`(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (url, options) => {
+      if (url === '/api/setup') { window.fetch = originalFetch; return new Response(JSON.stringify({ error: '안내문 저장에 실패했습니다. 다시 시도해 주세요.' }), { status: 500, headers: { 'Content-Type': 'application/json' } }); }
+      return originalFetch(url, options);
+    };
+    const form = document.querySelector('#auth-form'); form.elements.confirm.value = ${JSON.stringify(password)}; form.requestSubmit();
+  })()`);
+  await waitFor('!document.querySelector("#auth-form [type=submit]").disabled && !document.querySelector("#auth-error").hidden', 'setup error remains retryable');
+  assert.equal(await evaluate('document.querySelector("#auth-form").elements.password.value'), password);
+  assert.equal(await evaluate('document.querySelector("#auth-form").elements.passwordNotice.value'), setupNotice);
+  assert.equal(await evaluate('document.querySelector("#setup-notice-preview a").href'), setupNotice);
+  await evaluate('document.querySelector("#auth-error").hidden = true');
   await screenshot('setup');
-  await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(password)}; form.elements.confirm.value = ${JSON.stringify(password)}; form.requestSubmit(); })()`);
+  await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+  assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false, 'setup preview fits on mobile');
+  await screenshot('setup-notice-mobile', true);
+  await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
+  await evaluate('document.querySelector("#auth-form").requestSubmit(); document.querySelector("#auth-form").requestSubmit();');
   await waitFor('!!document.querySelector(".calendar")', 'setup and first calendar');
+  assert.equal(mutations.filter(url => url.endsWith('/api/setup')).length, 1, 'repeated submits send one setup request');
+  assert.equal(JSON.parse(await fs.readFile(brandingFile, 'utf8')).passwordNotice, setupNotice);
+  await click(`document.querySelector('[data-action="logout"]')`);
+  await waitFor('!!document.querySelector("#auth-form")', 'login screen after initial setup');
+  assert.equal(await evaluate('document.querySelector("#auth-password-notice a").href'), setupNotice, 'initial notice applies without reload');
+  assert.equal(await evaluate('!!document.querySelector("#auth-form").elements.passwordNotice'), false, 'login does not edit the notice');
+  await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(password)}; form.requestSubmit(); })()`);
+  await waitFor('!!document.querySelector(".calendar")', 'login with initial password');
+  await click(`document.querySelector('[data-action="branding-settings"]')`);
+  await waitFor('!document.querySelector("#branding-fields").disabled', 'initial notice in system settings');
+  assert.equal(await evaluate('document.querySelector("#branding-form").elements.passwordNotice.value'), setupNotice);
+  await click(`document.querySelector('[data-close="branding-dialog"]')`);
+  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('[data-action="filter"]')).map(item => item.dataset.filter)`), ['all', 'maintenance', 'incident']);
+  assert.deepEqual(await evaluate(`Array.from(document.querySelector('#event-form').elements.category.options).map(item => item.value)`), ['maintenance', 'incident']);
   assert.equal(await evaluate('document.querySelector(".brand-name").textContent'), branding.name);
   assert.equal(await evaluate('document.querySelector(".brand-caption").textContent'), branding.subtitle);
   assert.equal(await evaluate('Intl.DateTimeFormat().resolvedOptions().timeZone'), 'America/Los_Angeles');
@@ -357,6 +453,21 @@ try {
   await waitFor('!!document.querySelector(".calendar")', 'calendar reload');
   await evaluate(`(() => { const year = document.querySelector('#calendar-year'); year.value = '2026'; year.dispatchEvent(new Event('change', { bubbles: true })); const month = document.querySelector('#calendar-month'); month.value = '8'; month.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await checkCalendarLayout({ weeks: 5, fits: true, september: true });
+  // Returning to the cached month must ignore delayed replies for another year.
+  await evaluate(`window.periodFetch = window.fetch; window.delayedPeriods = []; window.fetch = (url, options) => {
+    const query = new URL(url, location.origin);
+    if (query.pathname === '/api/events' && query.searchParams.get('from')?.startsWith('2035')) {
+      const response = window.periodFetch(url, { ...options, signal: undefined });
+      return new Promise((resolve, reject) => window.delayedPeriods.push(() => response.then(resolve, reject)));
+    }
+    return window.periodFetch(url, options);
+  };`);
+  await selectMonth(2035, 2);
+  await waitFor('window.delayedPeriods.length > 0', 'delayed period request');
+  await selectMonth(2026, 9);
+  await evaluate('window.fetch = window.periodFetch; Promise.all(window.delayedPeriods.map(finish => finish()))');
+  await waitFor('document.querySelector(".workspace").getAttribute("aria-busy") === "false"', 'cached month restored');
+  await checkCalendarLayout({ weeks: 5, fits: true, september: true });
   await checkCalendarTimeFills();
   await checkCurrentTime('2026-09-09', '12:00', 0.5);
   await click(`document.querySelector('.day-cell.today .day-more')`);
@@ -383,6 +494,8 @@ try {
   await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...popupPoint, button: 'left', clickCount: 1 });
   await command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...popupPoint, button: 'left', clickCount: 1 });
   assert.equal(await evaluate('document.querySelector("#overflow-dialog").open'), false);
+  assert.equal(await evaluate('document.querySelector("#detail-dialog").open'), true);
+  await click('document.querySelector("#detail-dialog [data-action=event-view][data-view=timeline]")');
   assert.equal(await evaluate('document.querySelector("#timeline-date-input").value'), '2026-09-09');
   assert.equal(await evaluate('document.querySelector("#now-text").textContent'), '12:00');
   await click(`document.querySelector('[data-view="calendar"]')`);
@@ -419,7 +532,9 @@ try {
   }
   assert.deepEqual([...densities].sort(), [1, 2, 3]);
   // Resizing from a scrolled short screen must not add the scroll offset to the calendar.
-  await evaluate('window.scrollTo(0, document.documentElement.scrollHeight)');
+  await command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 600, deviceScaleFactor: 1, mobile: false });
+  await delay(300);
+  await evaluate('document.querySelector(".app-content").scrollTop = document.querySelector(".app-content").scrollHeight');
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
   await delay(300);
   await selectMonth(2026, 8);
@@ -494,7 +609,17 @@ try {
   await screenshot('event-list-selected-light');
   await click(themeControl);
   await pressKey('Enter', 13);
-  await waitFor('!!document.querySelector(".timeline-row.highlighted")', 'popup selection navigates to timeline');
+  await waitFor('document.querySelector("#detail-dialog").open', 'popup selection opens event information');
+  assert.equal(await evaluate('document.querySelector("#overflow-dialog").open'), false);
+  assert.ok(await evaluate('!!document.querySelector(".calendar")'), 'opening event information keeps the current view');
+  assert.ok(await evaluate('document.querySelector("#detail-title").textContent.includes("데이터베이스")'));
+  await click('document.querySelector("#detail-dialog [data-action=event-view][data-view=calendar]")');
+  assert.equal(await evaluate('document.querySelector(".day-cell.selected").dataset.date'), '2026-09-09');
+  assert.ok(await evaluate('document.querySelector(".event-badge.highlighted").textContent.includes("데이터베이스")'));
+  await click('document.querySelector(".day-cell.selected .day-number")');
+  await click(`Array.from(document.querySelectorAll('.overflow-item')).find(button => button.textContent.includes('데이터베이스'))`);
+  await click('document.querySelector("#detail-dialog [data-action=event-view][data-view=timeline]")');
+  await waitFor('!!document.querySelector(".timeline-row.highlighted")', 'event information navigates to timeline');
   assert.equal(await evaluate('document.querySelector("#timeline-date-input").value'), '2026-09-09');
   assert.ok(await evaluate('document.querySelector(".timeline-row.highlighted").textContent.includes("데이터베이스")'));
   await click(`document.querySelector('[data-action="view"][data-view="calendar"]')`);
@@ -523,7 +648,10 @@ try {
   await screenshot('event-list-light');
   await click(themeControl);
   await click(`Array.from(document.querySelectorAll('.overflow-item')).find(button => button.textContent.includes('결제 API'))`);
-  await waitFor('!!document.querySelector(".timeline-row.highlighted")', 'calendar to timeline highlighting');
+  await waitFor('document.querySelector("#detail-dialog").open', 'day list opens event information');
+  await screenshot('event-information-navigation');
+  await click('document.querySelector("#detail-dialog [data-action=event-view][data-view=timeline]")');
+  await waitFor('!!document.querySelector(".timeline-row.highlighted")', 'event information to timeline highlighting');
   assert.equal(await evaluate('document.querySelector("#timeline-date-input").value'), '2026-09-09');
   await screenshot('timeline-dark');
   const scrollBeforeTheme = await evaluate('document.querySelector("#timeline-scroller").scrollLeft');
@@ -534,7 +662,44 @@ try {
 
   assert.equal(await evaluate('!!document.querySelector(".page-footer,.workspace-footer")'), false);
   assert.ok(await evaluate('document.querySelector(".header .timezone-badge").textContent.includes("Asia/Seoul")'));
-  assert.ok(await evaluate('document.querySelector(".header-status").getBoundingClientRect().bottom <= document.querySelector(".header").getBoundingClientRect().bottom'));
+  assert.equal(await evaluate('document.querySelector(".header").getBoundingClientRect().height'), 64);
+  assert.equal(await evaluate('document.querySelector(".display-timezone").textContent'), 'UTC+9');
+  assert.equal(await evaluate('document.querySelector("#user-menu-panel").hidden'), true);
+  await evaluate('document.querySelector("#user-menu-toggle").focus()');
+  await pressKey('Enter', 13);
+  assert.equal(await evaluate('document.querySelector("#user-menu-toggle").getAttribute("aria-expanded")'), 'true');
+  await pressKey('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.dataset.action'), 'branding-settings');
+  await pressKey('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.getAttribute("role")'), 'switch');
+  await screenshot('user-menu-light');
+  await pressKey('Enter', 13);
+  assert.equal(await evaluate('document.documentElement.dataset.theme'), 'dark');
+  assert.equal(await evaluate('document.activeElement.getAttribute("aria-checked")'), 'true');
+  assert.equal(await evaluate('document.querySelector("#user-menu-panel").hidden'), false, 'theme switch keeps the menu and focus');
+  await screenshot('user-menu-dark');
+  await pressKey('Enter', 13);
+  await pressKey('Escape', 27);
+  assert.equal(await evaluate('document.activeElement.id'), 'user-menu-toggle');
+  assert.equal(await evaluate('document.querySelector("#user-menu-panel").hidden'), true);
+  await pressKey(' ', 32);
+  assert.equal(await evaluate('document.querySelector("#user-menu-panel").hidden'), false, 'Space opens the menu');
+  await pointerClick('document.querySelector(".brand")');
+  assert.equal(await evaluate('document.querySelector("#user-menu-panel").hidden'), true, 'outside pointer closes the menu');
+  await pointerClick('document.querySelector("#user-menu-toggle")');
+  await pressKey('Tab', 9);
+  await pressKey('Tab', 9);
+  await pressKey('Tab', 9);
+  assert.equal(await evaluate('document.activeElement.dataset.action'), 'logout');
+  await pressKey('Tab', 9);
+  assert.equal(await evaluate('document.querySelector("#user-menu-panel").hidden'), true, 'Tab can leave the panel without a focus trap');
+  await pointerClick('document.querySelector("#user-menu-toggle")');
+  await pointerClick('document.querySelector("[data-action=branding-settings]")');
+  await waitFor('!document.querySelector("#branding-fields").disabled', 'settings from user menu');
+  assert.equal(await evaluate('document.querySelector("#user-menu-panel").hidden'), true);
+  await pressKey('Escape', 27);
+  assert.equal(await evaluate('document.activeElement.id'), 'user-menu-toggle', 'closing settings returns focus to the badge');
+  await delay(250);
   assert.ok(await evaluate('document.querySelector("#time-headers").title.includes("드래그")'));
   assert.ok(await evaluate('document.querySelector(".timeline-bar").title.includes("상세 보기")'));
   await dragTimeline(0.65, true);
@@ -557,18 +722,42 @@ try {
   assert.equal(await evaluate('document.querySelector("#timeline-scroller").classList.contains("is-dragging")'), false);
   await command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...cancelPoint, button: 'left', buttons: 0, clickCount: 1 });
   await evaluate(`(() => { const input = document.querySelector('#timeline-date-input'); input.value = '2026-09-09'; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-  // The moved status remains live during both failures and recovery.
+  // A single persistent notice survives view changes, repeated failures and collapse.
   await command('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   await evaluate('document.dispatchEvent(new Event("visibilitychange"))');
-  await waitFor('document.querySelector(".header-status #sync-status").classList.contains("error")', 'top sync error state');
+  await waitFor('!document.querySelector("#connection-notice").hidden', 'persistent connection error');
+  assert.ok(await evaluate('document.querySelector("#sync-status").classList.contains("error")'));
+  await evaluate(`window.connectionAnnouncements = 0; new MutationObserver(() => window.connectionAnnouncements++).observe(document.querySelector('#connection-announcement'), { childList: true });`);
   await click(`document.querySelector('[data-action="view"][data-view="calendar"]')`);
   assert.equal(await evaluate('document.querySelector(".header #sync-status").textContent'), '연결 확인 필요', 'view changes preserve connection errors');
   await click(`document.querySelector('[data-action="view"][data-view="timeline"]')`);
-  await screenshot('header-connection-error');
+  await screenshot('connection-error');
+  await pointerClick('document.querySelector("#connection-retry")');
+  await waitFor('document.querySelector("#connection-retry").getAttribute("aria-disabled") === "false"', 'failed manual retry finishes');
+  assert.equal(await evaluate('document.querySelectorAll("#connection-notice").length'), 1);
+  assert.equal(await evaluate('window.connectionAnnouncements'), 0, 'repeated failures do not repeat screen-reader announcements');
+  await pointerClick('document.querySelector("[data-action=connection-collapse]")');
+  assert.equal(await evaluate('document.activeElement.id'), 'connection-expand');
+  await click(`document.querySelector('[data-view="calendar"]')`);
+  assert.equal(await evaluate('document.querySelector("#connection-details").hidden'), true, 'collapsed state survives rerender');
+  await pointerClick('document.querySelector("#connection-expand")');
+  assert.equal(await evaluate('document.activeElement.dataset.action'), 'connection-collapse');
+  await click(`document.querySelector('[data-view="workflow"]')`);
+  await checkAppScroll();
+  assert.equal(await evaluate('document.querySelector("#connection-notice").hidden'), false, 'connection warning persists in the workflow view');
+  // A network-online event alone must not dismiss the error; wait for a successful read.
+  await evaluate(`window.originalSyncFetch = window.fetch; window.syncReadCount = 0; window.fetch = (url, options) => new URL(url, location.origin).pathname === '/api/events' ? (window.syncReadCount++, new Promise((resolve, reject) => { window.finishSyncRead = () => window.originalSyncFetch(url, options).then(resolve, reject); })) : window.originalSyncFetch(url, options);`);
   await command('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
-  await evaluate('document.dispatchEvent(new Event("visibilitychange"))');
-  await waitFor('!document.querySelector(".header-status #sync-status").classList.contains("error")', 'top sync status recovery');
+  await evaluate('window.dispatchEvent(new Event("online"))');
+  await waitFor('!!window.finishSyncRead', 'recovery read in progress');
+  assert.equal(await evaluate('document.querySelector("#connection-notice").hidden'), false);
+  await pointerClick('document.querySelector("#connection-retry")');
+  assert.equal(await evaluate('window.syncReadCount'), 1, 'retry does not overlap an active read');
+  await evaluate('window.fetch = window.originalSyncFetch; window.finishSyncRead()');
+  await waitFor('document.querySelector("#connection-notice").hidden', 'notice removed after actual synchronization');
+  assert.equal(await evaluate('document.activeElement.id'), 'user-menu-toggle', 'recovery does not leave focus in the hidden notice');
   assert.equal(await evaluate('document.querySelector(".header #sync-status").textContent'), '동기화됨');
+  await click(`document.querySelector('[data-view="timeline"]')`);
 
   for (let index = 0; index < 8; index++) {
     await evaluate(`document.querySelector('#timeline-scroller').scrollLeft += document.querySelector('.time-header-cell').getBoundingClientRect().width`);
@@ -614,7 +803,8 @@ try {
   assert.deepEqual(await evaluate(`(() => { const fields = document.querySelector('#event-form').elements; return ['startDate', 'startHour', 'startMinute', 'endDate', 'endHour', 'endMinute'].map(name => fields[name].value); })()`), ['2026-09-09', '23', '59', '2026-09-10', '00', '00']);
   assert.ok(await evaluate('document.querySelector("#event-timezone").textContent.includes("Asia/Seoul")'));
   await evaluate(`(() => { const form = document.querySelector('#event-form'); form.elements.title.value = 'UI 수정 이벤트'; form.elements.openEnded.checked = true; form.elements.openEnded.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-  assert.equal(await evaluate('Array.from(document.querySelectorAll("#end-fields input, #end-fields select")).every(field => field.matches(":disabled"))'), true);
+  assert.equal(await evaluate('Array.from(document.querySelectorAll("#end-fields input:not([name=openEnded]), #end-fields select")).every(field => field.matches(":disabled"))'), true);
+  assert.equal(await evaluate('document.querySelector("#event-form").elements.openEnded.matches(":disabled")'), false);
   await evaluate(`(() => { const form = document.querySelector('#event-form'); form.elements.openEnded.checked = false; form.elements.openEnded.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   assert.equal(await evaluate('document.querySelector("#event-form").elements.endHour.value'), '00');
   assert.equal(await evaluate('document.querySelector("#event-form").elements.endDate.matches(":disabled")'), false);
@@ -630,6 +820,8 @@ try {
   const beforeBrandingSave = await fs.readFile(path.join(runDir, 'data', 'store.json'), 'utf8');
   await click(`document.querySelector('[data-action="branding-settings"]')`);
   await waitFor('!document.querySelector("#branding-fields").disabled', 'branding settings loaded');
+  assert.equal(await evaluate('document.querySelector("#services-panel").hidden'), true);
+  assert.ok(await evaluate('document.querySelector(".settings-sidebar").getBoundingClientRect().right <= document.querySelector(".settings-content").getBoundingClientRect().left'), 'settings groups appear to the left of their fields');
   // An existing selection must not filter out other zones when using the dropdown.
   await evaluate('document.querySelector("#branding-form").elements.timezone.focus()');
   await pressKey('Home', 36);
@@ -646,6 +838,7 @@ try {
     document.querySelector('#branding-form').requestSubmit();
   })()`);
   await waitFor('!document.querySelector("#branding-dialog").open', 'branding saved');
+  assert.equal(await evaluate('document.activeElement.id'), 'user-menu-toggle');
   assert.equal(await evaluate('document.querySelector(".brand-name").textContent'), '운영 <Ops> & UI');
   assert.equal(await evaluate('document.title'), '운영 <Ops> & UI');
   assert.equal(await evaluate('!!document.querySelector(".brand-caption")'), false);
@@ -654,7 +847,7 @@ try {
   assert.equal(await evaluate('document.documentElement.dataset.theme'), 'dark', 'personal theme overrides a new default');
   assert.equal((await fs.readFile(path.join(runDir, 'data', 'store.json'), 'utf8')), beforeBrandingSave);
   assert.equal(JSON.parse(await fs.readFile(brandingFile, 'utf8')).showSubtitle, false);
-  await command('Page.reload');
+  await reloadPage();
   await waitFor('!!document.querySelector(".calendar")', 'saved branding after reload');
   await checkCurrentTime('2026-09-09', '03:00', 3 / 24);
   assert.equal(await evaluate('document.querySelector(".brand-name").textContent'), '운영 <Ops> & UI');
@@ -700,7 +893,7 @@ try {
   assert.equal(await evaluate('document.querySelector("#branding-form").elements.name.value'), '다른 화면의 이름');
   await click(`document.querySelector('[data-close="branding-dialog"]')`);
   await evaluate(`localStorage.removeItem('${themeKey}')`);
-  await command('Page.reload');
+  await reloadPage();
   await waitFor('!!document.querySelector(".calendar")', 'branding default without personal preference');
   assert.equal(await evaluate('document.documentElement.dataset.theme'), 'light');
   await click(`document.querySelector('[data-action="branding-settings"]')`);
@@ -720,54 +913,224 @@ try {
   await click(`document.querySelector('[data-view="timeline"]')`);
   await evaluate(`(() => { const input = document.querySelector('#timeline-date-input'); input.value = '2026-09-09'; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
 
-  // Manage a private catalog and policy through the UI, then use both catalog and free entries.
+  // Manage the service catalog without a state policy, then use catalog and free entries.
   await click(`document.querySelector('[data-action="branding-settings"]')`);
-  await click(`document.querySelector('#open-operations-settings')`);
-  await waitFor('!document.querySelector("#operations-fields").disabled', 'private operations settings');
-  for (const [id, name] of [['resource-a', '가상 서비스 A'], ['resource-b', '가상 서비스 B']]) {
+  await click(`document.querySelector('#open-services-settings')`);
+  await waitFor('!document.querySelector("#services-fields").disabled', 'private services settings');
+  for (const name of ['가상 서비스 A', '가상 서비스 B']) {
     await click(`document.querySelector('#catalog-add')`);
-    await evaluate(`(() => { const row = Array.from(document.querySelectorAll('[data-catalog-row]')).at(-1); row.querySelector('[data-key=id]').value = '${id}'; row.querySelector('[data-key=name]').value = '${name}'; row.querySelector('[data-key=connectorId]').value = 'mock'; })()`);
+    await evaluate(`Array.from(document.querySelectorAll('[data-catalog-row]')).at(-1).querySelector('[data-key=name]').value = '${name}'`);
   }
-  for (const [id, name, priority] of [['limited', '제한', 10], ['nominal', '기준', 0]]) {
-    await click(`document.querySelector('#policy-state-add')`);
-    await evaluate(`(() => { const row = Array.from(document.querySelectorAll('[data-policy-row]')).at(-1); row.querySelector('[data-key=id]').value = '${id}'; row.querySelector('[data-key=name]').value = '${name}'; row.querySelector('[data-key=priority]').value = '${priority}'; row.querySelector('[data-key=id]').dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await click(`document.querySelector('#system-settings-tab')`);
+  await evaluate('document.querySelector("#system-settings-tab").focus()');
+  await pressKey('ArrowDown', 40);
+  assert.equal(await evaluate('document.activeElement.id'), 'open-services-settings');
+  assert.equal(await evaluate('document.querySelector("#branding-panel").hidden'), true);
+  assert.equal(await evaluate('document.querySelectorAll("dialog[open]").length'), 1);
+  assert.equal(await evaluate('document.querySelectorAll("[data-catalog-row]").length'), 2, 'changing settings groups preserves unsaved services');
+  assert.equal(await evaluate('document.querySelector("#services-panel").textContent.includes("상태 정책")'), false);
+  await evaluate(`document.querySelector('#services-form').requestSubmit()`);
+  await waitFor('!document.querySelector("[data-catalog-row] [data-remove-row]") && !document.querySelector("#services-save").disabled', 'private services settings saved');
+  const [resourceA, resourceB] = await evaluate('(async () => (await (await fetch("/api/services")).json()).services.map(service => service.id))()');
+  assert.notEqual(resourceA, resourceB);
+  assert.equal(await evaluate('document.querySelectorAll("[data-catalog-row] input:not([data-key=name]):not([data-key=active])").length'), 0);
+  await screenshot('services-settings');
+  await click('document.querySelector("#log-policy-tab")');
+  await waitFor('!document.querySelector("#log-policy-fields").disabled', 'log policy settings');
+  assert.deepEqual(await evaluate(`(() => { const form = document.querySelector('#log-policy-form'); return [form.elements.cron.value, form.elements.eventRetentionDays.value, form.elements.auditRetentionDays.value]; })()`), ['0 3 * * *', '1825', '90']);
+  assert.ok(await evaluate('document.querySelector("#log-policy-timezone").textContent.includes("Asia/Seoul")'));
+  for (const [field, value] of [['eventRetentionDays', '29'], ['eventRetentionDays', '3651'], ['auditRetentionDays', '6'], ['auditRetentionDays', '181']]) {
+    assert.equal(await evaluate(`(() => { const input = document.querySelector('#log-policy-form').elements.${field}; const previous = input.value; input.value = '${value}'; const valid = input.checkValidity(); input.value = previous; return valid; })()`), false);
   }
-  await evaluate(`document.querySelector('#operations-form').elements.baseline.value = 'nominal'; document.querySelector('#operations-form').requestSubmit()`);
-  await waitFor('!!document.querySelector("[data-catalog-row] [data-key=id][readonly]")', 'private operations settings saved');
-  await screenshot('operations-settings');
-  await click(`document.querySelector('[data-close="operations-dialog"]')`);
+  await evaluate('document.querySelector("#log-policy-form").elements.cron.value = "60 * * * *"; document.querySelector("#log-policy-form").requestSubmit()');
+  await waitFor('!document.querySelector("#log-policy-error").hidden && !document.querySelector("#log-policy-save").disabled', 'invalid cron rejected');
+  await evaluate('document.querySelector("#log-policy-form").elements.cron.value = "0 4 * * *"; document.querySelector("#log-policy-form").requestSubmit()');
+  await waitFor('document.querySelector("#log-policy-error").hidden && !document.querySelector("#log-policy-save").disabled', 'log policy saved');
+  assert.equal(app.vault.state.logPolicy.cron, '0 4 * * *');
+  const maintenanceClock = app.logMaintenance.clock;
+  app.logMaintenance.clock = () => '2026-09-09T19:00:00.000Z';
+  await app.logMaintenance.tick();
+  app.logMaintenance.clock = maintenanceClock;
+  await click('document.querySelector("#log-policy-reload")');
+  await waitFor('document.querySelector("#log-policy-status").textContent.includes("완료")', 'log policy result');
+  await screenshot('log-policy-settings');
   await click(`document.querySelector('[data-close="branding-dialog"]')`);
   await click(`document.querySelector('[data-action="new-event"]')`);
   await waitFor('!document.querySelector("#event-save").disabled', 'service picker loaded');
-  await click(`document.querySelector('[data-service-pick="resource-a"]')`);
+  await click(`document.querySelector('[data-service-pick="${resourceA}"]')`);
   await evaluate(`document.querySelector('#event-form').elements.service.value = '직접 입력 서비스'`);
   await click(`document.querySelector('#service-custom-add')`);
-  await evaluate(`(() => { const form = document.querySelector('#event-form'); form.elements.title.value = '복수 서비스 상태 계산'; form.elements.calculationEnabled.checked = true; form.elements.impact.value = 'limited'; form.elements.endMode.value = 'confirmed'; form.elements.confirmAuthorization.checked = true; form.requestSubmit(); })()`);
-  await waitFor('document.querySelector("#event-error").textContent.includes("직접 입력 서비스")', 'unmapped free entry blocks enabling');
-  await evaluate(`(() => { const select = document.querySelector('[data-service-target]'); select.value = 'resource-b'; select.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('.event-operations').open = true; })()`);
+  await evaluate(`document.querySelector('#event-form').elements.title.value = '복수 서비스 기록'`);
+  assert.equal(await evaluate('document.querySelectorAll(".event-services, [data-service-target]").length'), 0);
   await screenshot('multi-service-editor');
   await evaluate(`document.querySelector('#event-form').requestSubmit()`);
   await waitFor('!document.querySelector("#event-dialog").open', 'multi-service event saved');
-  const multiple = await evaluate(`(async () => (await (await fetch('/api/events')).json()).events.find(event => event.title === '복수 서비스 상태 계산'))()`);
+  const multiple = await evaluate(`(async () => (await (await fetch('/api/events')).json()).events.find(event => event.title === '복수 서비스 기록'))()`);
   assert.deepEqual(multiple.services.map(entry => entry.kind), ['catalog', 'custom']);
-  assert.equal(multiple.services[1].targetId, 'resource-b');
-  assert.equal(multiple.execution.enabled, true);
-  await click(`document.querySelector('[data-action="branding-settings"]')`);
-  await click(`document.querySelector('#open-state-preview')`);
-  await waitFor('document.querySelectorAll(".state-card").length === 2', 'target state preview');
-  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.state-card>span')).map(span => span.dataset.state)`), ['limited', 'limited']);
-  await screenshot('state-preview');
-  await click(`document.querySelector('[data-close="state-preview-dialog"]')`);
-  await click(`document.querySelector('[data-close="branding-dialog"]')`);
+  assert.equal(Object.hasOwn(multiple.services[1], 'targetId'), false);
+  assert.equal(Object.hasOwn(multiple, 'execution'), false);
+  await click(`document.querySelector('.timeline-label[data-action="detail"][data-id="${multiple.id}"]')`);
+  assert.equal(await evaluate('document.querySelectorAll("[data-action=state-preview], [data-action=confirm-event-end], #state-preview-dialog").length'), 0);
+  await click(`document.querySelector('[data-close="detail-dialog"]')`);
+  // Audit timestamps use the same frozen clock as the browser's date filters.
+  const auditFixtureTime = await evaluate('new Date().toISOString()');
+  await app.vault.mutate(state => { for (const row of state.changes) row.at = auditFixtureTime; });
+  await click(`document.querySelector('[data-view="audit"]')`);
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'initial workflow history');
+  assert.equal(await evaluate('document.querySelector("[data-audit-kind][aria-pressed=true]").dataset.auditKind'), 'workflows');
+  const auditDates = () => evaluate('(() => { const form = document.querySelector("#audit-filter-form"); return [form.elements.fromDate.value, form.elements.untilDate.value]; })()');
+  assert.deepEqual(await auditDates(), ['2026-08-09', '2026-09-09']);
+  assert.equal(await evaluate('document.querySelector("[data-audit-period][aria-pressed=true]").dataset.auditPeriod'), '1m');
+  assert.equal(await evaluate('document.querySelector("#audit-filter-panel").hidden'), true);
+  assert.ok(await evaluate('document.querySelector("[name=fromDate]").getBoundingClientRect().height > 0'), 'dates are visible with extra filters collapsed');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-audit-period]")).map(button => button.textContent)'), ['1일', '1주', '2주', '1개월', '3개월', '6개월', '1년']);
+  const defaultQuery = auditQueries.findLast(query => query.get('kind') === 'workflows' && query.has('from'));
+  assert.equal(defaultQuery.get('from'), '2026-08-08T15:00:00.000Z');
+  assert.equal(defaultQuery.get('until'), '2026-09-09T15:00:00.000Z', 'today is included in the app timezone');
+  await screenshot('audit-default-month');
+  const refreshButton = 'document.querySelector("[data-audit-command=refresh]")';
+  const refreshReady = () => waitFor(`!${refreshButton}.disabled`, 'refresh feedback and request completed');
+  const spamRefresh = () => evaluate(`(() => { const button = ${refreshButton}; for (let index = 0; index < 25; index++) button.dispatchEvent(new MouseEvent('click', { bubbles: true })); })()`);
+  let beforeAudit = auditQueries.length, beforeServices = serviceQueries.length;
+  await evaluate(`(() => { const button = ${refreshButton}; button.click(); window.auditRefreshSpin = button.querySelector('.icon').getAnimations()[0]; window.auditRefreshSpin.pause(); })()`);
+  assert.deepEqual(await evaluate('window.auditRefreshSpin.effect.getKeyframes().map(frame => frame.transform)'), ['rotate(0deg)', 'rotate(360deg)']);
+  assert.equal(await evaluate('window.auditRefreshSpin.effect.getTiming().iterations'), 1);
+  assert.equal(await evaluate(`${refreshButton}.getAttribute('aria-busy')`), 'true');
+  await spamRefresh();
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'fast refresh response');
+  await delay(650);
+  await spamRefresh();
+  assert.equal(await evaluate(`${refreshButton}.disabled`), true, 'a running animation keeps the lock after the response and minimum duration');
+  assert.equal(auditQueries.length - beforeAudit, 1, 'spam sends only one request containing the list and summary counts');
+  assert.equal(serviceQueries.length - beforeServices, 1, 'spam sends only one catalog request');
+  await evaluate('window.auditRefreshSpin.finish()');
+  await refreshReady();
+
+  await command('Network.emulateNetworkConditions', { offline: false, latency: 1200, downloadThroughput: -1, uploadThroughput: -1 });
+  beforeAudit = auditQueries.length; beforeServices = serviceQueries.length;
+  await pointerClick(refreshButton);
+  await waitFor(`!${refreshButton}.querySelector('.icon').getAnimations().length`, 'one rotation completed');
+  assert.equal(await evaluate('document.querySelector("#audit-results").getAttribute("aria-busy")'), 'true', 'slow request outlasts the rotation');
+  assert.equal(await evaluate(`${refreshButton}.disabled`), true);
+  await spamRefresh();
+  await refreshReady();
+  assert.equal(auditQueries.length - beforeAudit, 1);
+  assert.equal(serviceQueries.length - beforeServices, 1);
+  await command('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await pointerClick(refreshButton);
+  await waitFor('!document.querySelector("#audit-error").hidden', 'refresh failure shown');
+  await refreshReady();
+  await command('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await pointerClick(refreshButton);
+  await refreshReady();
+  assert.equal(await evaluate('document.querySelector("#audit-error").hidden'), true, 'failed refresh can be retried');
+  await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  beforeAudit = auditQueries.length; beforeServices = serviceQueries.length;
+  await evaluate(`${refreshButton}.click()`);
+  assert.equal(await evaluate(`${refreshButton}.querySelector('.icon').getAnimations().length`), 0);
+  assert.equal(await evaluate(`${refreshButton}.disabled`), true);
+  await spamRefresh();
+  await refreshReady();
+  assert.equal(auditQueries.length - beforeAudit, 1);
+  assert.equal(serviceQueries.length - beforeServices, 1);
+  await command('Emulation.setEmulatedMedia', { features: [] });
+  for (const [period, from] of [['1d', '2026-09-09'], ['1w', '2026-09-03'], ['2w', '2026-08-27'], ['1m', '2026-08-09'], ['3m', '2026-06-09'], ['6m', '2026-03-09'], ['1y', '2025-09-09']]) {
+    const before = auditQueries.length;
+    await pointerClick(`document.querySelector('[data-audit-period="${period}"]')`);
+    await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'shortcut applied');
+    assert.deepEqual(await auditDates(), [from, '2026-09-09']);
+    assert.equal(await evaluate('document.querySelector("[data-audit-period][aria-pressed=true]").dataset.auditPeriod'), period);
+    assert.ok(auditQueries.length > before, 'shortcut immediately queries records');
+  }
+  await evaluate('(() => { const form = document.querySelector("#audit-filter-form"); form.elements.fromDate.value = "2026-08-01"; form.elements.fromDate.dispatchEvent(new Event("input", { bubbles: true })); form.elements.untilDate.value = "2026-08-20"; form.elements.untilDate.dispatchEvent(new Event("input", { bubbles: true })); form.requestSubmit(); })()');
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'custom date range');
+  assert.equal(await evaluate('document.querySelector("[data-audit-period][aria-pressed=true]")'), null);
+  await click(`document.querySelector('[data-audit-command="refresh"]')`);
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'custom dates survive refresh');
+  await refreshReady();
+  assert.deepEqual(await auditDates(), ['2026-08-01', '2026-08-20']);
+  await evaluate('document.querySelector("[name=untilDate]").value = "2026-07-31"; document.querySelector("[name=untilDate]").dispatchEvent(new Event("input", { bubbles: true }))');
+  assert.equal(await evaluate('document.querySelector("#audit-filter-form").checkValidity()'), false, 'reversed dates are rejected');
+  await click(`document.querySelector('[data-audit-command="reset"]')`);
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'default month restored');
+  assert.deepEqual(await auditDates(), ['2026-08-09', '2026-09-09']);
+  await setClock('2026-09-09T16:00:00Z', false);
+  await click(`document.querySelector('[data-audit-command="refresh"]')`);
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'relative period follows current app date');
+  await refreshReady();
+  assert.deepEqual(await auditDates(), ['2026-08-10', '2026-09-10']);
+  await setClock(auditFixtureTime, false);
+  await click(`document.querySelector('[data-audit-period="1m"]')`);
+  await click(`document.querySelector('[data-audit-kind="changes"]')`);
+  await waitFor('document.querySelectorAll("[data-audit-change]").length > 0', 'initial change history');
+  await evaluate('document.querySelector("#audit-filter-form").elements.search.value = "events-expired"; document.querySelector("#audit-filter-form").requestSubmit()');
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false" && document.querySelectorAll("[data-audit-change]").length === 1', 'expiry audit entry');
+  await click('document.querySelector("[data-audit-change]")');
+  assert.ok(await evaluate('document.querySelector("#audit-detail-dialog").textContent.includes("이벤트 만료 처리")'));
+  assert.ok(await evaluate('document.querySelector("#audit-detail-dialog").textContent.includes("삭제 기준 시각")'));
+  assert.ok(await evaluate('document.querySelector("#audit-detail-dialog").textContent.includes("시스템")'));
+  await screenshot('log-policy-audit-detail');
+  await click('document.querySelector("#audit-detail-dialog [data-close]")');
+  await evaluate('document.querySelector("#audit-filter-form").elements.search.value = ""; document.querySelector("#audit-filter-form").requestSubmit()');
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'audit filters restored');
+  assert.equal(await evaluate('document.querySelectorAll("[data-audit-command=settings], #execution-settings-dialog, [data-execution-action]").length'), 0);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-audit-kind]")).map(tab => tab.dataset.auditKind)'), ['workflows', 'changes']);
+  assert.equal(await evaluate('document.querySelectorAll("[data-audit-summary] .summary-card").length'), 4);
+  const auditCounts = await evaluate('Array.from(document.querySelectorAll("[data-audit-summary] .summary-value")).map(value => parseInt(value.textContent, 10))');
+  assert.equal(auditCounts[0], auditCounts[1] + auditCounts[2]);
+  await click(`document.querySelector('[data-audit-kind="workflows"]')`);
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'workflow audit history');
+  assert.equal(await evaluate('document.querySelector("#audit-error").hidden'), true);
+  await click(`document.querySelector('[data-view="timeline"]')`);
+  await click(`document.querySelector('.timeline-label[data-action="detail"][data-id="${multiple.id}"]')`);
+  await click(`document.querySelector('[data-action="event-audit"]')`);
+  await waitFor(`document.querySelector('#audit-filter-form').elements.eventId.value === '${multiple.id}'`, 'event to filtered audit');
+  await waitFor('document.querySelectorAll("[data-audit-change]").length > 0', 'filtered change history');
+  await waitFor('document.querySelector("#audit-results").getAttribute("aria-busy") === "false"', 'audit summary loaded');
+  assert.equal(await evaluate('document.querySelectorAll("[data-audit-summary] .summary-card").length'), 4);
+  assert.equal(await evaluate('document.querySelector("#audit-filter-panel").hidden'), false);
+  await click('document.querySelector("[data-audit-change]")');
+  assert.equal(await evaluate('document.querySelector("#audit-detail-dialog").open'), true);
+  assert.equal(await evaluate('document.querySelectorAll("#audit-detail-dialog .audit-change-values>section").length'), 2);
+  await screenshot('audit-change-detail');
+  await click('document.querySelector("#audit-detail-dialog [data-close]")');
+  await checkAppScroll();
+  await screenshot('audit-changes');
+  await click(themeControl);
+  await screenshot('audit-changes-light');
+  await click(themeControl);
+  await click(`document.querySelector('[data-view="timeline"]')`);
   // Restore the original calendar fixture density for the existing layout checks.
   await evaluate(`(async () => { const response = await fetch('/api/events/${multiple.id}', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: ${multiple.version} }) }); if (!response.ok) throw new Error('Multi-service fixture cleanup failed'); document.dispatchEvent(new Event('visibilitychange')); })()`);
-  await waitFor('!document.querySelector("#timeline-rows").textContent.includes("복수 서비스 상태 계산")', 'multi-service fixture removed');
+  await waitFor('!document.querySelector("#timeline-rows").textContent.includes("복수 서비스 기록")', 'multi-service fixture removed');
 
+  for (const width of [320, 390, 700, 701, 900, 1100]) {
+    await command('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width <= 700 });
+    await delay(300);
+    await checkAppScroll();
+    await pointerClick('document.querySelector("#user-menu-toggle")');
+    const layout = await evaluate(`(() => { const panel = document.querySelector('#user-menu-panel'); const box = panel.getBoundingClientRect(); return { headerHeight: document.querySelector('.header').getBoundingClientRect().height, fits: box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight, width: document.documentElement.scrollWidth, viewport: innerWidth }; })()`);
+    assert.ok(layout.fits && layout.width <= layout.viewport + 1, JSON.stringify(layout));
+    assert.ok(width <= 700 ? layout.headerHeight <= 120 : layout.headerHeight === 64, JSON.stringify(layout));
+    if (width === 390) await screenshot('user-menu-mobile');
+    await pressKey('Escape', 27);
+  }
   await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await delay(300);
   await evaluate('document.querySelector("#toast").hidden = true');
   assert.ok(await evaluate('document.documentElement.scrollWidth <= 391'), 'mobile layout must not overflow the page');
   await screenshot('mobile-timeline');
+  await command('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await evaluate('document.dispatchEvent(new Event("visibilitychange"))');
+  await waitFor('!document.querySelector("#connection-notice").hidden', 'mobile connection error');
+  await evaluate(`const testToast = document.querySelector('#toast'); testToast.textContent = '알림 배치 확인'; testToast.hidden = false;`);
+  assert.ok(await evaluate(`(() => { const notice = document.querySelector('#connection-notice').getBoundingClientRect(); const toast = document.querySelector('#toast').getBoundingClientRect(); return notice.bottom < toast.top && toast.bottom <= innerHeight && notice.left >= 0 && notice.right <= innerWidth; })()`), 'mobile notifications stack without overlap');
+  await screenshot('connection-error-mobile');
+  await pointerClick('document.querySelector("[data-action=connection-collapse]")');
+  await screenshot('connection-error-mobile-collapsed');
+  await command('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await evaluate('document.querySelector("#toast").hidden = true; document.dispatchEvent(new Event("visibilitychange"))');
+  await waitFor('document.querySelector("#connection-notice").hidden', 'mobile connection recovery');
   await click(`document.querySelector('[data-action="new-event"]')`);
   assert.ok(await evaluate('document.querySelector("#event-dialog").scrollWidth <= document.querySelector("#event-dialog").clientWidth'), '24-hour controls must fit the mobile dialog');
   await screenshot('mobile-event-24-hour');
@@ -777,7 +1140,7 @@ try {
   await screenshot('mobile-timeline-light');
   await click(themeControl);
   await click(`document.querySelector('[data-action="view"][data-view="calendar"]')`);
-  await checkCalendarLayout({ weeks: 5, fits: false, september: true });
+  await checkCalendarLayout({ weeks: 5, fits: true, september: true });
   await evaluate('document.querySelector(".calendar-scroll").scrollLeft = 150');
   const calendarScroll = await evaluate('document.querySelector(".calendar-scroll").scrollLeft');
   await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 700, deviceScaleFactor: 1, mobile: true });
@@ -786,6 +1149,14 @@ try {
   await checkCalendarLayout({ weeks: 5, fits: false, september: true });
   await evaluate('document.querySelector(".calendar-scroll").scrollLeft = 0');
   await screenshot('mobile-calendar');
+  await click(`document.querySelector('[data-view="workflow"]')`);
+  await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 500, deviceScaleFactor: 1, mobile: true });
+  await delay(200);
+  await checkAppScroll(true);
+  await screenshot('workflow-mobile-scroll');
+  await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 700, deviceScaleFactor: 1, mobile: true });
+  await delay(200);
+  await click(`document.querySelector('[data-view="calendar"]')`);
   await checkCurrentTime('2026-09-09', '12:00', 0.5);
   await click(`document.querySelector('[data-action="branding-settings"]')`);
   await waitFor('!document.querySelector("#branding-fields").disabled', 'mobile branding settings');
@@ -794,12 +1165,21 @@ try {
   await evaluate(`(() => { const form = document.querySelector('#branding-form'); form.elements.timezone.value = 'custom'; form.elements.timezone.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   assert.ok(await evaluate('document.querySelector("#branding-dialog").scrollWidth <= document.querySelector("#branding-dialog").clientWidth'), 'custom timezone must fit the mobile dialog');
   await screenshot('branding-custom-timezone-mobile');
-  await click(`document.querySelector('#open-operations-settings')`);
-  await waitFor('!document.querySelector("#operations-fields").disabled', 'mobile operations settings');
-  assert.ok(await evaluate('document.querySelector("#operations-dialog").scrollWidth <= document.querySelector("#operations-dialog").clientWidth'), 'private settings fit a mobile dialog');
-  await screenshot('operations-settings-mobile');
-  await click(`document.querySelector('[data-close="operations-dialog"]')`);
+  await click(`document.querySelector('#open-services-settings')`);
+  await waitFor('!document.querySelector("#services-fields").disabled', 'mobile services settings');
+  assert.ok(await evaluate('document.querySelector(".settings-content").scrollWidth <= document.querySelector(".settings-content").clientWidth'), 'private settings fit a mobile panel');
+  await screenshot('services-settings-mobile');
+  await click('document.querySelector("#log-policy-tab")');
+  await waitFor('!document.querySelector("#log-policy-fields").disabled', 'mobile log policy');
+  assert.ok(await evaluate('document.querySelector(".settings-content").scrollWidth <= document.querySelector(".settings-content").clientWidth'), 'log policy fits the mobile panel');
+  await screenshot('log-policy-settings-mobile');
   await click(`document.querySelector('[data-close="branding-dialog"]')`);
+  await click(`document.querySelector('[data-view="audit"]')`);
+  await waitFor('document.querySelectorAll("[data-audit-change]").length > 0', 'mobile audit');
+  await checkAppScroll(true);
+  assert.ok(await evaluate('document.documentElement.scrollWidth <= 391'), 'audit must fit the mobile page');
+  await screenshot('audit-mobile');
+  await click(`document.querySelector('[data-view="calendar"]')`);
   await click(`document.querySelector('.day-cell[data-date="2026-09-09"] .day-more')`);
   assert.ok(await evaluate('document.querySelector("#overflow-dialog").scrollWidth <= document.querySelector("#overflow-dialog").clientWidth'), 'event dates must fit the mobile popup');
   await screenshot('mobile-event-list');
@@ -816,13 +1196,62 @@ try {
   await screenshot('mobile-login-dark');
   assert.equal(await evaluate('document.querySelector(".brand-name").textContent'), branding.name);
   assert.equal(await evaluate('document.querySelector("#detail-content").textContent'), '');
-  assert.equal(await evaluate('document.querySelector("#operations-services").textContent'), '');
+  assert.equal(await evaluate('document.querySelector("#services-catalog").textContent'), '');
   assert.equal(await evaluate('document.querySelector("#event-services").textContent'), '');
+  assert.equal(await evaluate('document.querySelector("#audit-detail-dialog").textContent'), '');
+  assert.equal(await evaluate('document.querySelector("#execution-settings-dialog")'), null);
   assert.equal(await evaluate('document.querySelector("#auth-form").elements.password.value'), '');
   await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(password)}; form.requestSubmit(); })()`);
   await waitFor('!!document.querySelector(".calendar")', 'login again');
+  // Save through the settings UI, then verify the public notice after logout and reload.
+  const noticeCases = [
+    { value: '  비밀번호는 운영 담당자에게 문의해 주세요.\n<img src=x onerror="window.noticeXss=true">  ', link: false },
+    { value: 'https://support.example/password?note="<ops>"&team=help', link: true },
+    { value: 'http://support.example/' + 'guide'.repeat(100), link: true },
+    { value: 'javascript:window.noticeXss=true', link: false },
+    { value: 'https://', link: false },
+    { value: 'https://support.example/ 안내를 확인하세요.', link: false },
+    { value: ' \n ', link: false }
+  ];
+  for (const [index, { value, link }] of noticeCases.entries()) {
+    await click(`document.querySelector('[data-action="branding-settings"]')`);
+    await waitFor('!document.querySelector("#branding-fields").disabled', 'password notice settings loaded');
+    assert.equal(await evaluate('document.querySelector("#branding-form").elements.passwordNotice.value'), index ? noticeCases[index - 1].value.trim() : '');
+    await evaluate(`(() => { const form = document.querySelector('#branding-form'); form.elements.passwordNotice.value = ${JSON.stringify(value)}; form.requestSubmit(); })()`);
+    await waitFor('!document.querySelector("#branding-dialog").open', 'password notice saved');
+    assert.equal(JSON.parse(await fs.readFile(brandingFile, 'utf8')).passwordNotice, value.trim());
+    await click(`document.querySelector('[data-action="logout"]')`);
+    await waitFor('!!document.querySelector("#auth-form")', 'password notice on logout');
+    assert.equal(await evaluate('document.querySelector("#auth-password-notice")?.textContent ?? ""'), value.trim());
+    await evaluate('window.noticeReloadPending = true');
+    await reloadPage();
+    await waitFor('!window.noticeReloadPending && !!document.querySelector("#auth-form")', 'public password notice after reload');
+    const rendered = await evaluate(`(() => {
+      const notice = document.querySelector('#auth-password-notice');
+      const anchor = notice?.querySelector('a');
+      return { visible: !!notice, text: notice?.textContent ?? '', href: anchor?.href, target: anchor?.target, rel: anchor?.rel,
+        children: notice?.children.length ?? 0, whiteSpace: notice && getComputedStyle(notice).whiteSpace,
+        describedBy: document.querySelector('#auth-form').elements.password.getAttribute('aria-describedby'),
+        overflow: document.documentElement.scrollWidth > innerWidth, xss: !!window.noticeXss };
+    })()`);
+    assert.equal(rendered.visible, !!value.trim());
+    assert.equal(rendered.text, value.trim());
+    assert.equal(rendered.children, link ? 1 : 0, 'notice HTML must remain text');
+    assert.equal(rendered.xss, false);
+    assert.equal(rendered.overflow, false, 'long notices and URLs fit the mobile login screen');
+    assert.equal(rendered.describedBy, value.trim() ? 'auth-password-notice' : null);
+    if (value.trim()) assert.equal(rendered.whiteSpace, 'pre-wrap');
+    if (link) {
+      assert.equal(rendered.href, new URL(value).href);
+      assert.equal(rendered.target, '_blank');
+      assert.equal(rendered.rel, 'noopener noreferrer');
+    }
+    if (index < 2) await screenshot(`password-notice-${link ? 'link' : 'text'}-mobile`);
+    await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(password)}; form.requestSubmit(); })()`);
+    await waitFor('!!document.querySelector(".calendar")', 'login after password notice check');
+  }
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('Browser checks passed: branding, default theme, browser preference persistence, cross-window sync, blocked storage, theme changes without server writes, setup, session, calendar date and badge popups, empty-day creation, keyboard and pointer navigation, timeline highlight, bidirectional infinite scroll, manual CRUD, encrypted service and policy settings, mixed service selection, state preview, mobile layout, XSS rendering, logout and login.');
+  console.log('Browser checks passed: user menu and keyboard focus, persistent connection error and recovery, retry deduplication, stacked mobile notifications, responsive header, branding, theme persistence, setup, session, calendar popups, timeline navigation, manual CRUD, service catalog settings, policy-free event forms, change and workflow audit records, mobile layout, XSS rendering, logout and login.');
   console.log(`Screenshots: ${output}`);
 } catch (error) {
   if (socket?.readyState === WebSocket.OPEN) await screenshot('failure').catch(() => {});

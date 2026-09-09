@@ -24,7 +24,7 @@ test('실제 HTTP 서버: 인증, 암호화, 동시 쓰기, 충돌, 재시작, �
   }
   try {
     await t.test('최초 설정 전에도 API 인증 필수, 다른 origin의 요청 거부', async () => {
-      assert.deepEqual((await call('/api/branding')).json, { name: 'Service Timeline', subtitle: '서비스 운영 기록', defaultTheme: 'light', timezone: 'UTC' });
+      assert.deepEqual((await call('/api/branding')).json, { name: 'Service Timeline', subtitle: '서비스 운영 기록', defaultTheme: 'light', timezone: 'UTC', passwordNotice: '' });
       assert.match(await (await fetch(base + '/')).text(), /data-default-theme="light"/);
       assert.equal((await call('/api/status')).json.initialized, false);
       assert.equal((await call('/api/events')).response.status, 401);
@@ -98,7 +98,7 @@ test('실제 HTTP 서버: 인증, 암호화, 동시 쓰기, 충돌, 재시작, �
       address = await app.listen(0);
       base = `http://127.0.0.1:${address.port}`;
       assert.deepEqual((await call('/api/status')).json, { initialized: true, authenticated: false, unlocked: false });
-      assert.deepEqual((await call('/api/branding')).json, branding);
+      assert.deepEqual((await call('/api/branding')).json, { ...branding, passwordNotice: '' });
       assert.equal(app.branding.name, branding.name);
       assert.equal((await call('/api/events')).response.status, 401);
       const login = await call('/api/login', 'POST', { password });

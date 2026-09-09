@@ -6,7 +6,7 @@ import os from 'node:os';
 import { createApp } from '../server.mjs';
 
 const password = 'branding-test-only-2026';
-const defaults = { name: 'Service Timeline', subtitle: '서비스 운영 기록', showSubtitle: true, defaultTheme: 'light', timezone: 'UTC' };
+const defaults = { name: 'Service Timeline', subtitle: '서비스 운영 기록', showSubtitle: true, defaultTheme: 'light', timezone: 'UTC', passwordNotice: '' };
 
 async function removeTestDirectory(directory) {
   const target = path.resolve(directory);
@@ -49,7 +49,7 @@ test('웹 브랜딩 설정: 인증, 검증, 충돌, 파일 보존, 즉시 반영
       assert.equal(current.branding.showSubtitle, false);
       assert.equal(current.branding.unexpected, undefined);
       const publicConfig = (await call('/api/branding', 'GET', undefined, { Cookie: '' })).json;
-      assert.deepEqual(publicConfig, { name: branding.name, subtitle: '', defaultTheme: 'dark', timezone: 'Asia/Seoul' });
+      assert.deepEqual(publicConfig, { name: branding.name, subtitle: '', defaultTheme: 'dark', timezone: 'Asia/Seoul', passwordNotice: '' });
       assert.equal(app.branding.name, branding.name);
       const html = await (await fetch(base + '/')).text();
       assert.ok(html.includes('<title>Payment &lt;Ops&gt; &amp; $&amp;</title>'));
@@ -61,7 +61,7 @@ test('웹 브랜딩 설정: 인증, 검증, 충돌, 파일 보존, 즉시 반영
 
     await t.test('잘못된 필드와 버전은 파일·공개 설정을 바꾸지 않음', async () => {
       const original = await fs.readFile(brandingFile, 'utf8');
-      for (const patch of [{ name: ' ' }, { name: 'x\ny' }, { name: 'x'.repeat(65) }, { subtitle: 'x'.repeat(81) }, { subtitle: null }, { showSubtitle: 'false' }, { defaultTheme: 'automatic' }, { timezone: '../invalid' }, { timezone: 'Not/A_Zone' }]) {
+      for (const patch of [{ name: ' ' }, { name: 'x\ny' }, { name: 'x'.repeat(65) }, { subtitle: 'x'.repeat(81) }, { subtitle: null }, { showSubtitle: 'false' }, { defaultTheme: 'automatic' }, { timezone: '../invalid' }, { timezone: 'Not/A_Zone' }, { passwordNotice: null }, { passwordNotice: 123 }, { passwordNotice: 'x'.repeat(2001) }, { passwordNotice: 'x\u0000y' }]) {
         const result = await call('/api/settings/branding', 'PUT', { branding: { ...current.branding, ...patch }, version: current.version });
         assert.equal(result.response.status, 400, JSON.stringify(patch));
       }
@@ -69,6 +69,19 @@ test('웹 브랜딩 설정: 인증, 검증, 충돌, 파일 보존, 즉시 반영
       assert.equal((await call('/api/settings/branding', 'PUT', { branding: [], version: current.version })).response.status, 400);
       assert.equal(await fs.readFile(brandingFile, 'utf8'), original);
       assert.deepEqual((await call('/api/branding')).json, current.publicBranding);
+    });
+
+    await t.test('비밀번호 안내문은 익명으로 조회되며 수정·비우기·URL 저장을 지원', async () => {
+      for (const notice of ['  운영 담당자에게 문의해 주세요.\n<a>문자 그대로 표시</a>  ', 'x'.repeat(2000), ' \n ', 'https://support.example/password?team=ops&lang=ko']) {
+        const result = await call('/api/settings/branding', 'PUT', { branding: { ...current.branding, passwordNotice: notice }, version: current.version });
+        assert.equal(result.response.status, 200);
+        current = result.json;
+        assert.equal(current.branding.passwordNotice, notice.trim());
+        assert.equal((await call('/api/settings/branding')).json.branding.passwordNotice, notice.trim());
+        assert.equal((await call('/api/branding', 'GET', undefined, { Cookie: '' })).json.passwordNotice, notice.trim());
+        assert.equal(JSON.parse(await fs.readFile(brandingFile, 'utf8')).passwordNotice, notice.trim());
+      }
+      assert.equal(await fs.readFile(path.join(dataDir, 'store.json'), 'utf8'), encrypted);
     });
 
     await t.test('같은 버전의 동시 저장 중 하나만 반영', async () => {
@@ -105,6 +118,88 @@ test('웹 브랜딩 설정: 인증, 검증, 충돌, 파일 보존, 즉시 반영
       assert.deepEqual((await call('/api/settings/branding')).json, { branding: current.branding, version: current.version });
       assert.equal(await fs.readFile(path.join(dataDir, 'store.json'), 'utf8'), encrypted);
     });
+  } finally { await app.close(); await removeTestDirectory(directory); }
+});
+
+test('최초 암호와 안내문 설정: 사전 검증, 기존 설정 보존, 재설정 차단과 재시작', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'timeline-branding-setup-'));
+  const brandingFile = path.join(directory, 'branding.json');
+  const dataDir = path.join(directory, 'data');
+  const original = JSON.stringify({ ...defaults, subtitle: '숨겨진 부제', showSubtitle: false, passwordNotice: '기존 안내', privateExtension: 'private' });
+  await fs.writeFile(brandingFile, original);
+  let app = await createApp({ brandingFile, dataDir });
+  let address = await app.listen(0);
+  let base = `http://127.0.0.1:${address.port}`;
+  const post = (url, body) => fetch(base + url, { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    for (const body of [{ password: 'short', passwordNotice: '변경할 안내' }, { password, passwordNotice: null }, { password, passwordNotice: 'x'.repeat(2001) }, { password, passwordNotice: 'x\u0000y' }]) {
+      const result = await post('/api/setup', body);
+      assert.equal(result.status, 400);
+      assert.equal(result.headers.get('set-cookie'), null);
+      assert.equal(app.vault.initialized, false);
+      assert.equal(await fs.readFile(brandingFile, 'utf8'), original);
+      await assert.rejects(fs.access(path.join(dataDir, 'store.json')), { code: 'ENOENT' });
+    }
+    const passwordNotice = 'https://support.example/password?team=ops&lang=ko';
+    const response = await post('/api/setup', { password, passwordNotice: `  ${passwordNotice}  `, name: 'ignored' });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.publicBranding.passwordNotice, passwordNotice);
+    assert.equal(result.publicBranding.subtitle, '');
+    assert.equal(result.publicBranding.privateExtension, undefined);
+    const saved = JSON.parse(await fs.readFile(brandingFile, 'utf8'));
+    assert.equal(saved.passwordNotice, passwordNotice);
+    assert.equal(saved.subtitle, '숨겨진 부제');
+    assert.equal(saved.name, defaults.name);
+    assert.equal(saved.privateExtension, 'private');
+    const cookie = response.headers.get('set-cookie').split(';')[0];
+    const settings = await (await fetch(base + '/api/settings/branding', { headers: { Cookie: cookie } })).json();
+    assert.equal(settings.branding.passwordNotice, passwordNotice);
+    assert.equal((await post('/api/setup', { password, passwordNotice: '익명 재설정 시도' })).status, 409);
+    assert.deepEqual(JSON.parse(await fs.readFile(brandingFile, 'utf8')), saved);
+    await app.close();
+    app = await createApp({ brandingFile, dataDir });
+    address = await app.listen(0);
+    base = `http://127.0.0.1:${address.port}`;
+    assert.equal((await (await fetch(base + '/api/branding')).json()).passwordNotice, passwordNotice);
+    const login = await post('/api/login', { password, passwordNotice: '로그인으로 변경 시도' });
+    assert.equal(login.status, 200);
+    assert.equal((await login.json()).publicBranding.passwordNotice, passwordNotice);
+  } finally { await app.close(); await removeTestDirectory(directory); }
+});
+
+test('초기 안내문 저장 실패는 암호 설정을 완료하지 않으며 같은 입력으로 재시도 가능', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'timeline-branding-setup-failure-'));
+  const brandingFile = path.join(directory, 'missing-parent', 'branding.json');
+  const app = await createApp({ dataDir: path.join(directory, 'data'), brandingFile });
+  const address = await app.listen(0);
+  const base = `http://127.0.0.1:${address.port}`;
+  const request = { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ password, passwordNotice: '운영 담당자에게 문의해 주세요.' }) };
+  try {
+    const failed = await fetch(base + '/api/setup', request);
+    assert.equal(failed.status, 500);
+    assert.equal(failed.headers.get('set-cookie'), null);
+    assert.equal(app.vault.initialized, false);
+    assert.equal(app.branding.passwordNotice, '');
+    await assert.rejects(fs.access(path.join(directory, 'data', 'store.json')), { code: 'ENOENT' });
+    await fs.mkdir(path.dirname(brandingFile));
+    assert.equal((await fetch(base + '/api/setup', request)).status, 200);
+    assert.equal(app.vault.initialized, true);
+    assert.equal(app.branding.passwordNotice, '운영 담당자에게 문의해 주세요.');
+  } finally { await app.close(); await removeTestDirectory(directory); }
+});
+
+test('초기 안내문을 비우면 설정 파일 쓰기 없이 시작 가능', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'timeline-branding-setup-empty-'));
+  const brandingFile = path.join(directory, 'missing-parent', 'branding.json');
+  const app = await createApp({ dataDir: path.join(directory, 'data'), brandingFile });
+  const address = await app.listen(0);
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const result = await fetch(base + '/api/setup', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ password, passwordNotice: ' \n ' }) });
+    assert.equal(result.status, 200);
+    assert.equal(app.branding.passwordNotice, '');
+    await assert.rejects(fs.access(brandingFile), { code: 'ENOENT' });
   } finally { await app.close(); await removeTestDirectory(directory); }
 });
 
