@@ -5,7 +5,9 @@ import { createContextEditor } from './workflow-context-ui.js';
 import { createSwitchEditor } from './workflow-switch-ui.js';
 import { createDryRunUI } from './workflow-dry-run-ui.js';
 import { createWorkflowDiagnostics } from './workflow-diagnostics-ui.js';
-import { GRID, CANVAS_SIZE, NODE_WIDTH as W, NODE_HEIGHT as H, nodeHeight, outputPosition, nodePosition, arrangeNodes, fitNodesToCanvas, newNodePosition, capCameraPan } from './workflow-layout.js';
+import { GRID, CANVAS_SIZE, MIN_ZOOM, NODE_WIDTH as W, NODE_HEIGHT as H, nodeHeight, outputPosition, nodePosition, arrangeNodes, fitNodesToCanvas, newNodePosition, capCameraPan, selectionDelta, nodesInSelection } from './workflow-layout.js';
+import { duplicateSelection } from './workflow-selection.js';
+import { createEdgeRouter, directEdgePath } from './workflow-routing.js';
 // Local editor drafts are separate from the saved definition used by the server.
 const TYPES = {
   start: { label: '이벤트 시작', group: 'trigger', icon: 'play', hint: '이벤트가 시작될 때' },
@@ -87,13 +89,23 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   const compactDocks = matchMedia('(max-width:1000px)');
   let dockMode = compactDocks.matches;
   let docks = { palette: !compactDocks.matches, inspector: !compactDocks.matches };
-  const files = createWorkflowFiles({ api, escape, generation, active, toast, current: () => mode === 'editor' ? current() : null, imported: (data, isNew) => { if (isNew) { accept(data); currentId = data.id; } else Object.assign(current(), data, { selected: data.nodes[0]?.id ?? null }); mountEditor(); } });
+  const files = createWorkflowFiles({ api, escape, generation, active, toast, current: () => mode === 'editor' ? current() : null, imported: (data, isNew) => { if (isNew) { accept(data); currentId = data.id; } else Object.assign(current(), data, { selected: data.nodes[0]?.id ?? null, selection: data.nodes.slice(0,1).map(node => node.id) }); mountEditor(); } });
   const contextEditor = createContextEditor({ escape });
   const switchEditor = createSwitchEditor({ escape });
   const dryRunUI = createDryRunUI({ api, escape, formatTime, generation, authenticated, active, current: () => mode === 'editor' ? current() : null, types: TYPES });
   const current = () => workflows.find(item => item.id === currentId);
   const find = id => current().nodes.find(node => node.id === id);
   const query = selector => host?.querySelector(selector);
+  const selection = () => current()?.selection ?? [];
+  const selectedNodes = () => current().nodes.filter(node => selection().includes(node.id));
+  const isSelected = id => !selectedEdge && selection().includes(id);
+  const propertiesLocked = () => drag?.mode === 'select' || selection().length > 1;
+  const nodeHandle = target => target.closest('.wf-port') ? null : target.closest('.wf-node')?.querySelector('[data-wf-select]');
+  function setSelection(ids) {
+    current().selection = [...new Set(ids)].filter(id => find(id));
+    current().selected = selection().length === 1 ? selection()[0] : null;
+    selectedEdge = null;
+  }
   const options = (values, selected) => values.map(([value, label]) => `<option value="${escape(value)}" ${value === selected ? 'selected' : ''}>${escape(label)}</option>`).join('');
   const field = (label, key, value, settings = '') => `<label class="wf-field">${label}<input data-wf-field="${key}" value="${escape(value)}" ${settings}></label>`;
   const select = (label, key, value, values) => `<label class="wf-field">${label}<select data-wf-field="${key}">${options(values, value)}</select></label>`;
@@ -102,7 +114,10 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   const signature = flow => JSON.stringify({ ...definition(flow), secretEdits: flow.secretEdits ?? '{}' });
   const dirty = flow => saved.has(flow.id) && signature(flow) !== signature(saved.get(flow.id));
   const diagnostics = createWorkflowDiagnostics({ api, escape, current, selected: () => selectedEdge ? null : current()?.selected, selectNode: id => { connecting = null; selectNode(id); }, centerNode, changed: updateEditorState, layout: () => { if (query('.wf-stage')) syncDocks(); }, svg });
-  const editorState = flow => ({ ...flow, selected: flow.selected ?? flow.nodes[0]?.id ?? null, zoom: flow.zoom ?? 1, secretEdits: '{}' });
+  const editorState = flow => {
+    const selection = (flow.selection ?? [flow.selected ?? flow.nodes[0]?.id]).filter(id => flow.nodes.some(node => node.id === id));
+    return { ...flow, selection, selected:selection.length === 1 ? selection[0] : null, zoom:flow.zoom ?? 1, secretEdits:'{}' };
+  };
   function accept(flow) {
     const previous = workflows.find(item => item.id === flow.id);
     const next = editorState({ ...previous, ...flow });
@@ -287,26 +302,24 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function nodeMarkup(node) {
     const type = TYPES[node.type], isTrigger = type.group === 'trigger';
-    return `<article class="wf-node ${node.type === 'switch' ? 'wf-switch-node ' : ''}wf-${type.group}${current().selected === node.id && !selectedEdge ? ' is-selected' : ''}" data-node-id="${escape(node.id)}" style="left:${node.x}px;top:${node.y}px;height:${nodeHeight(node)}px" aria-label="${escape(node.name)} 노드">
+    return `<article class="wf-node ${node.type === 'switch' ? 'wf-switch-node ' : ''}wf-${type.group}${isSelected(node.id) ? ' is-selected' : ''}" data-node-id="${escape(node.id)}" style="left:${node.x}px;top:${node.y}px;height:${nodeHeight(node)}px" aria-label="${escape(node.name)} 노드">
       ${!isTrigger ? `<button class="wf-port wf-input" data-wf-input="${escape(node.id)}" aria-label="${escape(node.name)}에 연결" title="이 노드로 연결"></button>` : ''}
-      <button class="wf-node-select" data-wf-select="${escape(node.id)}" aria-pressed="${current().selected === node.id && !selectedEdge}"><span class="wf-node-top"><span class="wf-type-icon">${svg(type.icon)}</span><span><small>${type.label}</small><strong>${escape(node.name)}</strong></span></span><span class="wf-node-description">${escape(subtitle(node))}</span><span class="wf-node-caption">${node.type === 'http' ? `<b>${escape(node.config.method)}</b> HTTP 요청` : node.type === 'context' ? '이후 노드에서 context.키로 사용' : node.type === 'switch' ? `${node.config.cases.length}개 분기 · 더블 클릭하여 편집` : isTrigger ? '시작점' : node.type === 'condition' ? '두 갈래로 분기' : '이 경로의 마지막 동작'}</span></button>
+      <button class="wf-node-select" data-wf-select="${escape(node.id)}" aria-pressed="${isSelected(node.id)}"><span class="wf-node-top"><span class="wf-type-icon">${svg(type.icon)}</span><span><small>${type.label}</small><strong>${escape(node.name)}</strong></span></span><span class="wf-node-description">${escape(subtitle(node))}</span><span class="wf-node-caption">${node.type === 'http' ? `<b>${escape(node.config.method)}</b> HTTP 요청` : node.type === 'context' ? '이후 노드에서 context.키로 사용' : node.type === 'switch' ? `${node.config.cases.length}개 분기 · 더블 클릭하여 편집` : isTrigger ? '시작점' : node.type === 'condition' ? '두 갈래로 분기' : '이 경로의 마지막 동작'}</span></button>
       ${outputs(node).map(port => outputMarkup(node, port)).join('')}
     </article>`;
   }
 
-  function edgePath(edge) {
-    const from = find(edge.from), to = find(edge.to);
-    if (!from || !to) return '';
-    const outlet = outputPosition(from, edge.port), sx = from.x + outlet.x, sy = from.y + outlet.y;
-    const tx = to.x + W / 2, ty = to.y;
-    const bend = Math.max(50, Math.abs(ty - sy) * .5);
-    return `M ${sx} ${sy} C ${outlet.side === 'right' ? sx + bend : sx} ${outlet.side === 'right' ? sy : sy + bend}, ${tx} ${ty - bend}, ${tx} ${ty}`;
-  }
-
+  const edgeRouter = createEdgeRouter();
   function renderEdges() {
     const layer = query('.wf-edges');
     if (!layer) return;
-    layer.innerHTML = current().edges.map(edge => `<g class="wf-edge ${edge.port}${selectedEdge === edge.id ? ' is-selected' : ''}"><path class="wf-edge-line" d="${edgePath(edge)}"/><path class="wf-edge-hit" d="${edgePath(edge)}" data-wf-edge="${escape(edge.id)}" role="button" tabindex="0" aria-label="${escape(find(edge.from)?.name)}에서 ${escape(find(edge.to)?.name)} 연결 선택"/></g>`).join('');
+    const flow = current(), moving = drag?.mode === 'node', paths = moving ? null : edgeRouter(flow.nodes, flow.edges);
+    layer.innerHTML = '<defs><marker id="wf-edge-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="context-stroke"/></marker></defs>' + flow.edges.map(edge => {
+      const from = find(edge.from), to = find(edge.to);
+      if (!from || !to) return '';
+      const path = paths?.get(edge.id)?.path ?? directEdgePath(from, to, edge.port);
+      return `<g class="wf-edge ${edge.port}${selectedEdge === edge.id ? ' is-selected' : ''}"><path class="wf-edge-line" d="${path}" marker-end="url(#wf-edge-arrow)"/><path class="wf-edge-hit" d="${path}" data-wf-edge="${escape(edge.id)}" role="button" tabindex="0" aria-label="${escape(from.name)}에서 ${escape(to.name)} 연결 선택"/></g>`;
+    }).join('');
   }
 
   function dimensions() {
@@ -316,7 +329,9 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   function syncGrid() {
     const stage = query('.wf-stage'), world = query('.wf-world');
     if (!stage || !world) return;
-    const spacing = GRID * current().zoom;
+    const zoom = current().zoom, spacing = GRID * zoom;
+    // Offset the increased dot density when zooming out, preserving full contrast at 100% and above.
+    stage.style.setProperty('--wf-grid-strength', `${Math.min(1, zoom ** 2) * 100}%`);
     const stageBounds = stage.getBoundingClientRect(), worldBounds = world.getBoundingClientRect();
     // Gradient dots sit at tile centers; align those centers with world (0, 0).
     stage.style.backgroundSize = `${spacing}px ${spacing}px`;
@@ -337,7 +352,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   function zoomAt(value, clientX, clientY) {
     if (drag) return;
     const stage = query('.wf-stage'), flow = current(), rect = stage.getBoundingClientRect();
-    const zoom = Math.max(.35, Math.min(1.5, value));
+    const zoom = Math.max(MIN_ZOOM, Math.min(1.5, value));
     if (zoom === flow.zoom) return;
     const x = clientX === undefined ? stage.clientWidth / 2 : clientX - rect.left - stage.clientLeft;
     const y = clientY === undefined ? stage.clientHeight / 2 : clientY - rect.top - stage.clientTop;
@@ -440,7 +455,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function renderStatus() {
-    query('.wf-count').textContent = `${current().nodes.length}개 노드 · ${current().edges.length}개 연결`;
+    query('.wf-count').textContent = `${current().nodes.length}개 노드 · ${current().edges.length}개 연결${selection().length > 1 ? ` · ${selection().length}개 선택` : ''}`;
     query('.wf-canvas-help').textContent = connecting ? `${find(connecting.from)?.name}의 ‘${outputLabel(connecting.port, find(connecting.from))}’ → 연결할 노드를 선택하세요. Esc로 취소` : '';
     query('.wf-editor-footer').hidden = !connecting;
     query('.wf-stage').classList.toggle('is-connecting', !!connecting);
@@ -455,7 +470,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     const top = nodes.length ? Math.min(...nodes.map(node => node.y - 12)) : 0;
     const width = Math.max(...nodes.map(node => node.x + W), left + W) - left;
     const height = Math.max(...nodes.map(node => node.y + nodeHeight(node) + 36), top + H) - top;
-    current().zoom = Math.max(.35, Math.min(1, (area.right - area.left) / width, (area.bottom - area.top) / height));
+    current().zoom = Math.max(MIN_ZOOM, Math.min(1, (area.right - area.left) / width, (area.bottom - area.top) / height));
     current().panX = (area.left + area.right - width * current().zoom) / 2 - left * current().zoom;
     current().panY = (area.top + area.bottom - height * current().zoom) / 2 - top * current().zoom;
     sizeCanvas();
@@ -463,6 +478,12 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function renderInspector() {
     const inspector = query('.wf-inspector');
+    if (propertiesLocked()) {
+      const nodes = selectedNodes(), internal = current().edges.filter(edge => selection().includes(edge.from) && selection().includes(edge.to));
+      const canCopy = !drag && current().nodes.length + nodes.length <= LIMITS.nodes && current().edges.length + internal.length <= LIMITS.edges;
+      inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('arrange')} ${nodes.length}개 선택</span><div class="wf-node-actions"><button type="button" class="wf-icon-button" data-wf-command="duplicate-node" aria-label="선택한 노드 복제" title="선택한 노드와 내부 연결 복제" ${!canCopy || !nodes.length ? 'disabled' : ''}>${svg('copy')} 복제</button><button type="button" class="wf-icon-button wf-node-delete" data-wf-command="delete-node" aria-label="선택한 노드 삭제" title="선택한 노드 삭제 (Delete)" ${drag || !nodes.length ? 'disabled' : ''}>${svg('trash')} 삭제</button></div></div><div class="wf-inspector-body"><p class="wf-note">${drag?.mode === 'select' ? '영역을 드래그해 노드를 선택하고 있습니다.' : '여러 노드를 선택했습니다. 선택된 노드를 끌면 함께 이동합니다.'}</p><p class="wf-help">다중 선택 중에는 노드 속성을 편집할 수 없습니다. 빈 배경을 클릭하거나 Esc를 눌러 선택을 해제할 수 있습니다.</p><ul class="wf-selection-names">${nodes.map(node => `<li>${escape(node.name)}</li>`).join('')}</ul></div>`;
+      finishInspector(); return;
+    }
     const edge = current().edges.find(item => item.id === selectedEdge);
     if (edge) {
       inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('link')} 연결 설정</span></div><div class="wf-inspector-body"><p class="wf-section-label">선택한 연결</p><div class="wf-connection-summary"><strong>${escape(find(edge.from).name)}</strong><span>${escape(outputLabel(edge.port, find(edge.from)))} ↓</span><strong>${escape(find(edge.to).name)}</strong></div><p class="wf-help">연결을 지워도 양쪽 노드는 그대로 남습니다.</p><button class="wf-delete" data-wf-command="delete-edge">${svg('trash')} 연결 삭제</button></div>`;
@@ -496,14 +517,17 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function refreshSelection() { renderCanvas(); renderInspector(); syncDocks(); }
 
-  function selectNode(id) {
-    current().selected = id; selectedEdge = null;
-    // Keep the clicked element mounted so the browser can deliver a double click.
+  function syncSelection() {
     for (const element of host.querySelectorAll('.wf-node')) {
-      const selected = element.dataset.nodeId === id;
+      const selected = isSelected(element.dataset.nodeId);
       element.classList.toggle('is-selected', selected);
       element.querySelector('.wf-node-select').setAttribute('aria-pressed', String(selected));
     }
+  }
+  function selectNode(id) {
+    setSelection([id]);
+    // Keep the clicked element mounted so the browser can deliver a double click.
+    syncSelection();
     renderEdges(); renderInspector(); renderStatus();
     // Preserve pointer targets through a double click; move only after explicit fit/focus.
     setDock('inspector', true);
@@ -511,7 +535,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function editContext(id) {
     const node = find(id);
-    if (busy || connecting || node?.type !== 'context') return;
+    if (busy || connecting || propertiesLocked() || node?.type !== 'context') return;
     selectNode(id);
     contextEditor.open(node, entries => {
       node.config.entries = entries;
@@ -521,7 +545,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function editSwitch(id) {
     const node = find(id);
-    if (busy || connecting || node?.type !== 'switch') return;
+    if (busy || connecting || propertiesLocked() || node?.type !== 'switch') return;
     selectNode(id);
     switchEditor.open(node, config => {
       node.config = config;
@@ -542,7 +566,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (current().nodes.length >= LIMITS.nodes) { toast('최대 100개 노드를 배치할 수 있습니다.'); return; }
     const node = makeNode(type, `node-${randomUUID()}`, 36, 36);
     Object.assign(node, newNodePosition(current().nodes, node));
-    current().nodes.push(node); current().selected = node.id; selectedEdge = null; connecting = null;
+    current().nodes.push(node); setSelection([node.id]); connecting = null;
     refreshSelection();
     if (compactDocks.matches) setDock('palette', false);
     revealNode(node);
@@ -551,28 +575,26 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function deleteSelectedNode() {
     const flow = current();
-    if (busy || drag || !flow || selectedEdge || !find(flow.selected)) return false;
-    const id = flow.selected;
-    flow.nodes = flow.nodes.filter(node => node.id !== id);
-    flow.edges = flow.edges.filter(edge => edge.from !== id && edge.to !== id);
-    flow.selected = null; selectedEdge = null; connecting = null;
+    if (busy || drag || !flow || selectedEdge || !selection().length) return false;
+    const ids = new Set(selection());
+    flow.nodes = flow.nodes.filter(node => !ids.has(node.id));
+    flow.edges = flow.edges.filter(edge => !ids.has(edge.from) && !ids.has(edge.to));
+    setSelection([]); connecting = null;
     refreshSelection();
     query('.wf-stage').focus({ preventScroll: true });
     return true;
   }
 
   function duplicateSelectedNode() {
-    const flow = current(), source = flow && find(flow.selected);
-    if (busy || drag || !source || selectedEdge) return;
-    if (flow.nodes.length >= LIMITS.nodes) { toast('최대 100개 노드를 배치할 수 있습니다.'); return; }
-    const node = structuredClone(source);
-    node.id = `node-${randomUUID()}`;
-    node.name = `${source.name.slice(0, 76)} 복사본`;
-    Object.assign(node, nodePosition(source.x + GRID * 2, source.y + GRID * 2, node));
-    if (flow.nodes.some(item => item.x === node.x && item.y === node.y)) Object.assign(node, newNodePosition(flow.nodes, node));
-    flow.nodes.push(node); flow.selected = node.id; selectedEdge = null; connecting = null;
-    refreshSelection(); revealNode(node);
-    query(`[data-wf-select="${node.id}"]`).focus({ preventScroll: true });
+    const flow = current();
+    if (busy || drag || !flow || !selection().length || selectedEdge) return;
+    let copies;
+    try { copies = duplicateSelection(flow.nodes, flow.edges, selection(), type => `${type}-${randomUUID()}`); }
+    catch (error) { toast(error.message); return; }
+    flow.nodes.push(...copies.nodes); flow.edges.push(...copies.edges);
+    setSelection(copies.nodes.map(node => node.id)); connecting = null;
+    refreshSelection(); revealNode(copies.nodes[0]);
+    query(`[data-wf-select="${copies.nodes[0].id}"]`).focus({ preventScroll:true });
   }
 
   function connect(toId) {
@@ -588,18 +610,19 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     }
     current().edges = current().edges.filter(edge => edge.from !== fromId || edge.port !== connecting.port);
     current().edges.push({ id: `edge-${randomUUID()}`, ...connecting, to: toId });
-    current().selected = toId; connecting = null; selectedEdge = null; refreshSelection();
+    setSelection([toId]); connecting = null; refreshSelection();
   }
 
   function arrange() {
-    arrangeNodes(current().nodes, current().edges);
+    const layout = arrangeNodes(current().nodes, current().edges);
     renderCanvas(); fit();
+    if (layout.folded) toast(`${layout.columns.length}개 열로 정렬했습니다. 각 열은 위에서 아래로, 다음 열은 오른쪽으로 이어집니다.`);
   }
 
   function onClick(event) {
-    if (busy) return;
+    if (busy || drag) return;
     if (suppressClick) { suppressClick = false; if (event.detail > 0) return; }
-    const target = event.target.closest('button, [data-wf-edge]');
+    const target = event.target.closest('button, [data-wf-edge]') ?? nodeHandle(event.target);
     if (!target) return;
     if (target.dataset.wfDock) {
       const name = target.dataset.wfDock;
@@ -642,17 +665,18 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (target.dataset.wfOutput) {
       const next = { from: target.dataset.wfOutput, port: target.dataset.port };
       connecting = connecting?.from === next.from && connecting.port === next.port ? null : next;
-      current().selected = next.from; selectedEdge = null; refreshSelection();
+      setSelection([next.from]); refreshSelection();
       query(`[data-wf-output="${next.from}"][data-port="${next.port}"]`)?.focus({ preventScroll: true });
       return;
     }
     const nodeId = target.dataset.wfSelect ?? target.dataset.wfInput;
     if (nodeId) {
       if (connecting) connect(nodeId);
+      else if (selection().length > 1 && isSelected(nodeId)) { renderInspector(); setDock('inspector', true); }
       else selectNode(nodeId);
       return;
     }
-    if (target.dataset.wfEdge) { selectedEdge = target.dataset.wfEdge; connecting = null; refreshSelection(); setDock('inspector', true); return; }
+    if (target.dataset.wfEdge) { setSelection([]); selectedEdge = target.dataset.wfEdge; connecting = null; refreshSelection(); setDock('inspector', true); return; }
     switch (target.dataset.wfCommand) {
       case 'upload': files.upload().catch(error => showError(error.message)); break;
       case 'download': files.download().catch(error => showError(error.message)); break;
@@ -710,7 +734,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       updateEditorState(); return;
     }
     const key = event.target.dataset.wfField, node = find(current().selected);
-    if (!key || !node) return;
+    if (!key || !node || propertiesLocked()) return;
     if (key === 'name') node.name = event.target.value;
     else if (node.type === 'http' && ['timeoutMs', 'retries'].includes(key) && event.target.value !== '') node.config[key] = Number(event.target.value);
     else node.config[key] = event.target.value;
@@ -720,27 +744,42 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   function onPointerDown(event) {
     if (busy) return;
     suppressClick = false;
-    if (drag || !event.isPrimary || event.button !== 0) return;
+    if (drag || !event.isPrimary || ![0,2].includes(event.button)) return;
     const stage = event.target.closest('.wf-stage');
     if (!stage) return;
-    const handle = event.target.closest('[data-wf-select]');
+    const handle = nodeHandle(event.target);
+    const common = { x:event.clientX, y:event.clientY, pointerId:event.pointerId, buttons:event.button === 2 ? 2 : 1, moved:false };
     if (handle) {
-      if (connecting) return;
+      if (connecting || event.button !== 0) return;
       const node = find(handle.dataset.wfSelect);
-      drag = { mode: 'node', node, x: event.clientX, y: event.clientY, startX: node.x, startY: node.y, handle, pointerId: event.pointerId, moved: false };
+      if (!isSelected(node.id)) setSelection([node.id]);
+      drag = { ...common, mode:'node', handle, starts:selectedNodes().map(node => ({...node})) };
+      syncSelection(); renderInspector(); renderStatus();
     } else {
       if (event.target.closest('.wf-node, [data-wf-edge], button, input, select, textarea, a')) return;
       const rect = stage.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX >= rect.left + stage.clientWidth || event.clientY < rect.top || event.clientY >= rect.top + stage.clientHeight) return;
       event.preventDefault(); stage.focus({ preventScroll: true });
-      drag = { mode: 'pan', x: event.clientX, y: event.clientY, handle: stage, pointerId: event.pointerId, moved: false };
-      stage.classList.add('is-panning');
+      if (event.button === 2 || event.pointerType === 'touch') {
+        drag = { ...common, mode:'pan', handle:stage, panX:current().panX, panY:current().panY };
+        stage.classList.add('is-panning');
+      } else {
+        drag = { ...common, mode:'select', handle:stage, before:selection().slice(), start:worldPoint(event) };
+        connecting = null; setSelection([]); syncSelection(); renderEdges(); renderInspector(); renderStatus();
+        stage.classList.add('is-selecting');
+      }
     }
     drag.handle.setPointerCapture(event.pointerId);
   }
 
+  function worldPoint(event) {
+    const rect = query('.wf-stage').getBoundingClientRect(), flow = current();
+    return { x:(event.clientX - rect.left - (flow.panX ?? 0)) / flow.zoom, y:(event.clientY - rect.top - (flow.panY ?? 0)) / flow.zoom };
+  }
+
   function onPointerMove(event) {
     if (!drag || event.pointerId !== drag.pointerId) return;
+    if (!(event.buttons & drag.buttons)) { endDrag({ pointerId:event.pointerId, type:'pointerup' }); return; }
     const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
     if (!drag.moved && Math.hypot(dx, dy) < 5) return;
     drag.moved = true; event.preventDefault();
@@ -750,28 +789,49 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       drag.x = event.clientX; drag.y = event.clientY;
       sizeCanvas(); return;
     }
+    if (drag.mode === 'select') {
+      const end = worldPoint(event), box = query('.wf-selection-box'), flow = current();
+      box.hidden = false;
+      Object.assign(box.style, {left:`${Math.min(drag.start.x,end.x) * flow.zoom + flow.panX}px`,top:`${Math.min(drag.start.y,end.y) * flow.zoom + flow.panY}px`,width:`${Math.abs(end.x-drag.start.x) * flow.zoom}px`,height:`${Math.abs(end.y-drag.start.y) * flow.zoom}px`});
+      setSelection(nodesInSelection(flow.nodes,drag.start,end));
+      syncSelection(); renderInspector(); renderStatus(); return;
+    }
     const zoom = current().zoom;
-    Object.assign(drag.node, nodePosition(drag.startX + dx / zoom, drag.startY + dy / zoom, drag.node));
-    const element = drag.handle.closest('.wf-node');
-    element.style.left = `${drag.node.x}px`; element.style.top = `${drag.node.y}px`; element.classList.add('is-dragging');
+    const delta = selectionDelta(drag.starts,dx/zoom,dy/zoom);
+    for (const start of drag.starts) {
+      const node = find(start.id), element = query(`[data-node-id="${start.id}"]`);
+      node.x = start.x + delta.dx; node.y = start.y + delta.dy;
+      element.style.left = `${node.x}px`; element.style.top = `${node.y}px`; element.classList.add('is-dragging');
+    }
+    if (Math.round(dx / zoom / GRID) * GRID !== delta.dx) drag.x = event.clientX - delta.dx * zoom;
+    if (Math.round(dy / zoom / GRID) * GRID !== delta.dy) drag.y = event.clientY - delta.dy * zoom;
     renderEdges(); sizeCanvas(); updateEditorState();
   }
 
   function endDrag(event) {
     if (!drag || event.pointerId !== drag.pointerId) return;
     const previous = drag; drag = null;
+    const canceled = event.type !== 'pointerup';
     if (previous.handle.hasPointerCapture(event.pointerId)) previous.handle.releasePointerCapture(event.pointerId);
     if (previous.mode === 'pan') {
       previous.handle.classList.remove('is-panning');
-      suppressClick = previous.moved && event.type === 'pointerup';
+      if (canceled) { current().panX = previous.panX; current().panY = previous.panY; sizeCanvas(); }
       return;
     }
-    previous.handle.closest('.wf-node').classList.remove('is-dragging');
-    if (previous.moved) {
-      suppressClick = event.type === 'pointerup'; current().selected = previous.node.id; selectedEdge = null;
-      // Wait for the following click before replacing the captured element.
-      queueMicrotask(() => { if (host?.isConnected) { renderEdges(); renderInspector(); for (const node of host.querySelectorAll('.wf-node')) { const selected = node.dataset.nodeId === current().selected; node.classList.toggle('is-selected', selected); node.querySelector('.wf-node-select').setAttribute('aria-pressed', String(selected)); } } });
+    if (previous.mode === 'select') {
+      previous.handle.classList.remove('is-selecting'); query('.wf-selection-box').hidden = true;
+      if (canceled) setSelection(previous.before);
+      if (!canceled && selection().length) setDock('inspector',true);
+    } else {
+      for (const start of previous.starts) {
+        const node = find(start.id), element = query(`[data-node-id="${start.id}"]`);
+        if (canceled) { node.x = start.x; node.y = start.y; element.style.left = `${node.x}px`; element.style.top = `${node.y}px`; }
+        element.classList.remove('is-dragging');
+      }
     }
+    suppressClick = previous.moved && !canceled;
+    // Keep the captured node mounted for the click/double-click that follows.
+    syncSelection(); renderEdges(); renderInspector(); renderStatus(); syncDocks();
   }
 
   function mountEditor() {
@@ -790,18 +850,19 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     host.innerHTML = `<section class="wf-workspace" aria-label="워크플로우 편집">
       <p class="form-error" data-wf-error hidden></p>
       <div class="wf-editor">
-      <div class="wf-canvas-bar" title="빈 배경을 끌어 화면 이동 · 마우스 휠로 확대·축소 · 노드를 끌어 이동 · 아래 연결점을 눌러 연결 · 연결선을 눌러 편집"><div class="wf-heading-title"><button type="button" class="wf-icon-button" data-wf-command="list" title="워크플로우 목록" aria-label="워크플로우 목록">${svg('back')}</button><div class="wf-heading-copy"><h1><button class="wf-title-button" data-wf-command="rename" title="워크플로우 이름 편집"><span data-wf-editor-title>${escape(current().name || '이름 없는 워크플로우')}</span>${svg('edit')}</button><input class="wf-title-input" data-wf-name value="${escape(current().name)}" maxlength="80" aria-label="워크플로우 이름" hidden></h1><span class="wf-save-state" data-wf-save-state></span></div></div>${editorToolbar()}</div>
+      <div class="wf-canvas-bar" title="배경 좌클릭 드래그: 영역 선택 · 배경 우클릭 드래그: 화면 이동 · 마우스 휠: 확대·축소 · 선택한 노드 드래그: 함께 이동"><div class="wf-heading-title"><button type="button" class="wf-icon-button" data-wf-command="list" title="워크플로우 목록" aria-label="워크플로우 목록">${svg('back')}</button><div class="wf-heading-copy"><h1><button class="wf-title-button" data-wf-command="rename" title="워크플로우 이름 편집"><span data-wf-editor-title>${escape(current().name || '이름 없는 워크플로우')}</span>${svg('edit')}</button><input class="wf-title-input" data-wf-name value="${escape(current().name)}" maxlength="80" aria-label="워크플로우 이름" hidden></h1><span class="wf-save-state" data-wf-save-state></span></div></div>${editorToolbar()}</div>
       <aside class="wf-palette" id="wf-palette" aria-label="노드 목록"><div class="wf-panel-title"><span>${svg('library')} 노드 목록</span><button type="button" class="wf-icon-button wf-dock-close" data-wf-close-dock="palette" aria-label="노드 목록 접기" title="노드 목록 접기">${svg('close')}</button></div><div class="wf-library">${[['trigger', '시작 이벤트'], ['condition', '흐름 제어'], ['action', '액션']].map(([group, label]) => `<section class="wf-node-group"><h2>${label}</h2>${Object.entries(TYPES).filter(([, type]) => type.group === group).map(([id, type]) => `<button class="wf-library-item wf-${group}" data-wf-add="${id}"><span class="wf-type-icon">${svg(type.icon)}</span><span><strong>${type.label}</strong><small>${type.hint}</small></span>${svg('plus')}</button>`).join('')}</section>`).join('')}</div></aside>
       <div class="wf-canvas"><div class="wf-stage" tabindex="0" aria-label="노드 캔버스"><div class="wf-world-wrap"><div class="wf-world"><svg class="wf-boundary" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" aria-hidden="true"><rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}"/></svg><svg class="wf-edges" aria-label="노드 연결"></svg><div class="wf-nodes"></div></div></div><div class="wf-canvas-empty" hidden>${svg('arrange')}<h3>첫 번째 노드를 추가해 보세요</h3><p>시작 이벤트를 고르고, 필요한 동작을 연결하세요.</p><button class="button secondary" data-wf-add="start">${svg('plus')} 이벤트 시작 추가</button></div></div><div class="wf-canvas-footer"><span class="wf-count"></span><div class="wf-zoom"><button class="wf-icon-button" data-wf-command="zoom-out" aria-label="축소">${svg('minus')}</button><span data-wf-zoom-label></span><button class="wf-icon-button" data-wf-command="zoom-in" aria-label="확대">${svg('plus')}</button><span class="wf-zoom-divider"></span><button class="wf-icon-button" data-wf-command="fit" aria-label="화면에 맞추기" title="화면에 맞추기">${svg('fit')}</button></div></div></div>
       <aside class="wf-inspector" id="wf-inspector" aria-label="노드 설정"></aside><div class="wf-editor-footer"><span class="wf-canvas-help" role="status"></span></div></div></section>`;
     const settings = { signal: controller.signal };
     host.addEventListener('click', onClick, settings);
     host.addEventListener('dblclick', event => {
-      const handle = event.target.closest('[data-wf-select]');
+      const handle = nodeHandle(event.target);
       if (handle) { editContext(handle.dataset.wfSelect); editSwitch(handle.dataset.wfSelect); }
     }, settings);
     host.addEventListener('input', onInput, settings);
     host.addEventListener('change', event => {
+      if (propertiesLocked()) return;
       if (event.target.dataset.wfField === 'format' && find(current().selected)?.type === 'datetime') {
         const node = find(current().selected);
         if (node.config.format === 'custom' && !node.config.pattern) node.config.pattern = DEFAULT_DATE_PATTERN;
@@ -815,9 +876,10 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     host.addEventListener('focusout', event => { if (event.target.matches('[data-wf-name]')) finishNameEdit(); }, settings);
     host.addEventListener('focusin', event => {
       const node = event.target.closest('[data-node-id]');
-      if (!drag && node) revealNode(find(node.dataset.nodeId));
+      if (!drag && selection().length <= 1 && node) revealNode(find(node.dataset.nodeId));
     }, settings);
     host.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && drag) { event.preventDefault(); endDrag({ pointerId:drag.pointerId, type:'pointercancel' }); return; }
       if (event.key === 'Delete') {
         if (event.defaultPrevented || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || !authenticated() || !active() || document.querySelector('dialog[open]')) return;
         if (event.target.isContentEditable || event.target.closest('input, textarea, select, [role="textbox"]')) return;
@@ -830,7 +892,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       if (event.target.matches('[data-wf-name]') && !event.isComposing && ['Enter', 'Escape'].includes(event.key)) {
         event.preventDefault(); finishNameEdit(event.key === 'Escape'); query('[data-wf-command="rename"]').focus(); return;
       }
-      if (event.key === 'Escape' && connecting) { connecting = null; renderCanvas(); }
+      if (event.key === 'Escape' && !event.target.closest('input, textarea, select') && !document.querySelector('dialog[open]')) { query('.wf-stage').focus({ preventScroll:true }); connecting = null; setSelection([]); refreshSelection(); }
       if (event.target.matches('.wf-stage') && !drag && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault();
         const step = event.shiftKey ? 160 : 48;
@@ -838,16 +900,20 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
         current().panY = (current().panY ?? 0) + (event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0);
         sizeCanvas();
       }
-      if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('[data-wf-edge]')) { event.preventDefault(); selectedEdge = event.target.dataset.wfEdge; refreshSelection(); setDock('inspector', true); }
+      if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('[data-wf-edge]')) { event.preventDefault(); setSelection([]); selectedEdge = event.target.dataset.wfEdge; refreshSelection(); setDock('inspector', true); }
     }, settings);
     host.addEventListener('pointerdown', onPointerDown, settings);
-    host.addEventListener('pointermove', onPointerMove, settings);
-    host.addEventListener('pointerup', endDrag, settings);
-    host.addEventListener('pointercancel', endDrag, settings);
-    host.addEventListener('lostpointercapture', endDrag, settings);
+    // Continue an active drag if the browser releases capture during a gesture.
+    // Window listeners also receive the release outside the canvas; cancel/blur abort it.
+    window.addEventListener('pointermove', onPointerMove, settings);
+    window.addEventListener('pointerup', endDrag, settings);
+    window.addEventListener('pointercancel', endDrag, settings);
     diagnostics.mount(host);
     renderCanvas(); renderInspector();
     const stage = query('.wf-stage');
+    stage.insertAdjacentHTML('beforeend','<div class="wf-selection-box" aria-hidden="true" hidden></div>');
+    stage.addEventListener('contextmenu', event => event.preventDefault(), settings);
+    window.addEventListener('blur', () => { if (drag) endDrag({ pointerId:drag.pointerId, type:'pointercancel' }); }, settings);
     stage.addEventListener('wheel', onWheel, { ...settings, passive: false });
     compactDocks.addEventListener('change', () => {
       syncDockMode();

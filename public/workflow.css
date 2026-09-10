@@ -38,8 +38,11 @@
 .wf-action .wf-type-icon { color:var(--wf-purple); background:var(--wf-purple-bg); }
 .wf-canvas { position:absolute; inset:0; }
 .wf-canvas-bar { top:16px; left:16px; right:16px; display:flex; gap:16px; min-width:0; align-items:center; justify-content:space-between; padding:10px 12px; min-height:58px; }
-.wf-stage { position:relative; width:100%; height:100%; overflow:clip; background-image:radial-gradient(var(--line) 1px,transparent 1px); overscroll-behavior:contain; cursor:grab; touch-action:none; user-select:none; }
+.wf-stage { position:relative; width:100%; height:100%; overflow:clip; background-image:radial-gradient(color-mix(in srgb,var(--line) var(--wf-grid-strength,100%),var(--canvas)) 1px,transparent 1px); overscroll-behavior:contain; cursor:crosshair; touch-action:none; user-select:none; }
 .wf-stage.is-panning,.wf-stage.is-panning * { cursor:grabbing; }
+.wf-stage.is-selecting,.wf-stage.is-selecting * { cursor:crosshair; }
+.wf-selection-box { position:absolute; z-index:4; pointer-events:none; border:1px solid var(--green); background:color-mix(in srgb,var(--green) 12%,transparent); }
+.wf-selection-names { padding-left:20px; font-size:12px; line-height:1.8; overflow-wrap:anywhere; }
 .wf-stage:focus-visible { outline-offset:-3px; }
 .wf-world-wrap { position:absolute; inset:0; }
 .wf-world { position:absolute; top:0; left:0; transform-origin:0 0; }

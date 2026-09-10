@@ -4,16 +4,18 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.mjs';
 import { fileURLToPath } from 'node:url';
-import { CANVAS_SIZE, NODE_BOUNDS } from '../public/workflow-layout.js';
+import { CANVAS_SIZE, NODE_BOUNDS, MIN_ZOOM } from '../public/workflow-layout.js';
+import { checkTopology } from './workflow-topology-browser.mjs';
 import { checkDiagnostics } from './workflow-diagnostics-browser.mjs';
 import { checkSwitch } from './workflow-switch-browser.mjs';
+import { checkSelection } from './workflow-selection-browser.mjs';
 const tempRoot = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '.tmp');
 await fs.mkdir(tempRoot, {recursive:true});
 const runDir = await fs.mkdtemp(path.join(tempRoot, 'workflow-browser-'));
 const calls = [];
 const app = await createApp({ dataDir: path.join(runDir, 'data'), brandingFile: path.join(runDir, 'branding.json'), workflows: { autoStart: false, fetch: async (_url, options) => { calls.push(JSON.parse(options.body)); return new Response(JSON.stringify({accepted:true}),{status:500}); } }, logMaintenance: { autoStart: false } });
 const address = await app.listen(0);
-const browser = spawn(process.env.BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', ['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0', `--user-data-dir=${path.join(runDir,'profile')}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' });
+const browser = spawn(process.env.BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', ['--headless=new','--window-size=2400,1600','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0', `--user-data-dir=${path.join(runDir,'profile')}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let socket, id = 0, tracking = false;
 const pending = new Map(), requests = [], errors = [];
@@ -173,17 +175,17 @@ async function checkGrid(label) {
 async function panCanvas(dx,dy,reverse) {
  await evaluate(`document.querySelector('.wf-stage').scrollIntoView({block:'center',behavior:'instant'})`);
  const before=await evaluate(`(()=>{const s=document.querySelector('.wf-stage'),r=s.getBoundingClientRect(),m=new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform);for(const [x,y] of [[r.left+12,r.top+12],[r.right-12,r.top+12],[r.left+12,r.bottom-12],[r.right-12,r.bottom-12]]){const e=document.elementFromPoint(x,y);if(e?.closest('.wf-stage')&&!e.closest('.wf-node,[data-wf-edge],button'))return {x,y,panX:m.e,panY:m.f,zoom:m.a,width:s.clientWidth,height:s.clientHeight,nodes:[...document.querySelectorAll('.wf-node')].map(n=>[n.dataset.nodeId,n.style.left,n.style.top])};}throw Error('No background point');})()`);
- await command('Input.dispatchMouseEvent',{type:'mousePressed',x:before.x,y:before.y,button:'left',buttons:1,clickCount:1});
+ await command('Input.dispatchMouseEvent',{type:'mousePressed',x:before.x,y:before.y,button:'right',buttons:2,clickCount:1});
  assert.equal(await evaluate('document.querySelector(".wf-stage").classList.contains("is-panning")'),true);
  const distant=Math.max(Math.abs(dx),Math.abs(dy))>1000;
  const move=async(x,y)=>{
-  if(distant) await evaluate(`(()=>{const s=document.querySelector('.wf-stage');if(!s.hasPointerCapture(1))throw Error('Pan pointer was not captured');s.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:${x},clientY:${y},buttons:1,bubbles:true}));})()`);
-  else await command('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,buttons:1});
+  if(distant) await evaluate(`(()=>{const s=document.querySelector('.wf-stage');if(!s.hasPointerCapture(1))throw Error('Pan pointer was not captured');s.dispatchEvent(new PointerEvent('pointermove',{pointerId:1,clientX:${x},clientY:${y},buttons:2,bubbles:true}));})()`);
+  else await command('Input.dispatchMouseEvent',{type:'mouseMoved',x,y,buttons:2});
  };
  await move(before.x+dx,before.y+dy);
  const capped=await checkCamera('during pan');
  if(reverse) {await move(before.x+dx+reverse.x,before.y+dy+reverse.y);await checkCamera('reverse at cap',{x:capped.x-reverse.x/before.zoom,y:capped.y-reverse.y/before.zoom});}
- await command('Input.dispatchMouseEvent',{type:'mouseReleased',x:distant?before.x:before.x+dx,y:distant?before.y:before.y+dy,button:'left',buttons:0,clickCount:1});
+ await command('Input.dispatchMouseEvent',{type:'mouseReleased',x:distant?before.x:before.x+dx,y:distant?before.y:before.y+dy,button:'right',buttons:0,clickCount:1});
  const after=await evaluate(`(()=>{const m=new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform);return {panX:m.e,panY:m.f,nodes:[...document.querySelectorAll('.wf-node')].map(n=>[n.dataset.nodeId,n.style.left,n.style.top]),panning:document.querySelector('.wf-stage').classList.contains('is-panning')};})()`);
  const expectedX=Math.max(before.width/2-CANVAS_SIZE*before.zoom,Math.min(before.width/2,before.panX+dx))+(reverse?.x??0);
  const expectedY=Math.max(before.height/2-CANVAS_SIZE*before.zoom,Math.min(before.height/2,before.panY+dy))+(reverse?.y??0);
@@ -195,9 +197,9 @@ async function panCanvas(dx,dy,reverse) {
 }
 async function wheelZoom(delta,bounded=false) {
  const before=await evaluate(`(()=>{const s=document.querySelector('.wf-stage').getBoundingClientRect(),r=document.querySelector('.wf-world').getBoundingClientRect(),m=new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform),x=Math.round(s.left+s.width*.61),y=Math.round(s.top+s.height*.42);return {x,y,worldX:(x-r.left)/m.a,worldY:(y-r.top)/m.a,zoom:m.a,pageY:scrollY};})()`);
- const expected=Math.max(.35,Math.min(1.5,before.zoom*Math.exp(-Math.max(-240,Math.min(240,delta))*.002)));
+ const expected=Math.max(MIN_ZOOM,Math.min(1.5,before.zoom*Math.exp(-Math.max(-240,Math.min(240,delta))*.002)));
  await command('Input.dispatchMouseEvent',{type:'mouseMoved',x:before.x,y:before.y});
- await command('Input.dispatchMouseEvent',{type:'mouseWheel',x:before.x,y:before.y,deltaX:0,deltaY:delta});
+ await command('Input.synthesizeScrollGesture',{x:before.x,y:before.y,yDistance:-delta,gestureSourceType:'mouse',speed:1200});
  await until(()=>evaluate(`Math.abs(new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform).a-${expected})<.00001`));
  const after=await evaluate(`(()=>{const r=document.querySelector('.wf-world').getBoundingClientRect(),m=new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform);return {worldX:(${before.x}-r.left)/m.a,worldY:(${before.y}-r.top)/m.a,zoom:m.a,pageY:scrollY};})()`);
  if(!bounded) assert.ok(Math.abs(before.worldX-after.worldX)<.02&&Math.abs(before.worldY-after.worldY)<.02,JSON.stringify({before,after}));
@@ -226,10 +228,11 @@ async function checkCameraControls() {
  await click('[data-wf-command="fit"]');await checkGrid('fit after capped camera');
 }
 async function dragGridNode(dx,dy,scroll=0) {
- await evaluate(`document.querySelector('[data-wf-select="condition"]').scrollIntoView({block:'center',inline:'center',behavior:'instant'})`);
+ await evaluate(`document.querySelector('[data-wf-select="condition"]').focus({preventScroll:true})`);
  await delay(50);
  const point=await evaluate(`(()=>{const n=document.querySelector('[data-node-id="condition"]'),r=n.getBoundingClientRect(),w=document.querySelector('.wf-world');return {x:r.left+r.width/2,y:r.top+r.height/3,left:parseFloat(n.style.left),top:parseFloat(n.style.top),zoom:new DOMMatrix(getComputedStyle(w).transform).a};})()`);
  await command('Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',buttons:1,clickCount:1});
+ assert.equal(await evaluate('document.querySelector("[data-wf-select=condition]").hasPointerCapture(1)'),true,'node drag captures the pointer');
  if(scroll) await evaluate(`document.querySelector('.wf-stage').scrollTop+=${scroll}`);
  if(Math.max(Math.abs(dx),Math.abs(dy))>1000) {
   // Headless Chromium drops OS mouse moves outside its virtual display. Exercise
@@ -610,7 +613,9 @@ try {
  assert.equal(await evaluate('document.querySelector(".wf-diagnostics").hidden'),true);
  assert.equal(await evaluate('document.querySelector(".wf-node.has-error")===null'),true);
  await click('[data-wf-command="revert"]');assert.equal(calls.length,callsBeforeDate);
+ await checkSelection({app,evaluate,click,input,until,command,viewport,screen});
  await checkSwitch({app,calls,runDir,evaluate,click,input,until,command,viewport,screen,uploadFile});
+ await checkTopology({app,calls,runDir,evaluate,click,until,command,viewport,screen,uploadFile});
  assert.deepEqual(errors,[]);console.log(JSON.stringify({result:'passed',calls:calls.length,layouts,errors}));
 } catch(error) {console.log(JSON.stringify({errors,screen:await evaluate('document.body.innerText')}));await screen('workflow-real-error');throw error;}
 finally {

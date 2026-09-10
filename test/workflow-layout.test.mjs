@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { GRID, CANVAS_SIZE, NODE_WIDTH, NODE_HEIGHT, NODE_BOUNDS, nodeHeight, nodeBounds, outputPosition, nodePosition, arrangeNodes, newNodePosition, fitNodesToCanvas, capCameraPan } from '../public/workflow-layout.js';
 
 test('camera center stays within the canvas at every zoom and viewport size, without snapping', () => {
-  for (const zoom of [.35, .85, 1, 1.5]) for (const [width, height] of [[300, 600], [920, 800], [6000, 4000]]) {
+  for (const zoom of [.05, .15, .35, .85, 1, 1.5]) for (const [width, height] of [[300, 600], [920, 800], [6000, 4000]]) {
     for (const [x, y] of [[-20000, -20000], [-1, 5005], [6000, -30], [2502.125, 4096.375], [20000, 20000]]) {
       const original = { panX: width / 2 - x * zoom, panY: height / 2 - y * zoom };
       const capped = capCameraPan(original.panX, original.panY, zoom, width, height);

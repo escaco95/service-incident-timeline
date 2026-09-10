@@ -26,6 +26,8 @@ Node.js 22.13 이상과 기본 모듈만 사용하며 패키지 설치·빌드�
 | 내보내기·복원 | `lib/data-transfers.mjs`: 작업 수명. `lib/archive-worker.mjs`, `lib/archive-data.mjs`, `lib/archive-zip.mjs`: ZIP·검증·암호화 준비. `lib/restore-journal.mjs`: 적용·복구 |
 | 화면 | `public/app.js`, `public/date-utils.js`, `public/event-loader.js`: 캘린더·타임라인·날짜·조회. `public/*-ui.js`: 기능별 화면. `public/workflow-layout.js`: 그래프 배치 |
 
+워크플로우 배치는 `workflow-layout.js`에서 위상 순서의 계층을 만들고, 포트 순서를 유지하는 무게중심 정렬로 교차를 줄인 뒤 간격·열 분할 후보를 비교한다. 경계와 겹침 방지를 우선하며 지원 상한인 노드 100개·연결 200개에서도 고정 캔버스를 사용한다. `workflow-routing.js`는 노드 경계와 포트 탈출점을 좌표축으로 사용해 직교 회피 경로를 탐색한다. 배치와 경로 계산은 외부 패키지·서버 호출 없이 수행한다. 경로는 같은 기하 정보에서 재사용하며 노드 드래그 중에는 기본 곡선으로 연결하고 이동 종료 후 다시 계산한다. 교차 수의 전역 최솟값이나 공유 구간 제거를 보장하지 않는다.
+
 ## 저장과 실행 경계
 
 내부 저장소는 schema 5를 지원한다. 지원하지 않는 schema는 원본을 보존하고 오류를 반환한다. 날짜별 파일 형식과 인증 API는 [서비스 모델](services-model.md), 보관 기준은 [화면·동작 명세](specification.md#데이터-보관-정책), 백업·복구 절차는 [README](../README.md#저장백업복구)에 정의한다.

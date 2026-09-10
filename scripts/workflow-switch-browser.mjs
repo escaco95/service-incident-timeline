@@ -93,7 +93,7 @@ export async function checkSwitch({ app, calls, runDir, evaluate, click, input, 
   assert.ok(route.y<=nodeBounds(route).maxY);
   for (const edge of stored.edges.filter(edge=>edge.from==='route')) {
     const coords = await evaluate(`(()=>{const p=document.querySelector(${JSON.stringify('[data-wf-output="route"][data-port="'+edge.port+'"]')}),n=p.closest('.wf-node'),e=document.querySelector(${JSON.stringify('[data-wf-edge="'+edge.id+'"]')});return {x:parseFloat(n.style.left)+parseFloat(p.style.left)+7,y:parseFloat(n.style.top)+parseFloat(p.style.top)+7,path:e.getAttribute('d')};})()`);
-    assert.ok(coords.path.startsWith(`M ${coords.x} ${coords.y} C `),'edge starts at its switch outlet');
+    assert.ok(coords.path.startsWith(`M ${coords.x} ${coords.y} `),'edge starts at its switch outlet');
   }
   await click('[data-wf-command="fit"]'); await screen('workflow-switch-canvas');
   await click('[data-wf-command="download"]');

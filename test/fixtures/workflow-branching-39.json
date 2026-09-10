@@ -1,0 +1,987 @@
+{
+  "format": "service-incident-timeline/workflow",
+  "formatVersion": 1,
+  "definition": {
+    "name": "Synthetic layout reproduction",
+    "nodes": [
+      {
+        "id": "node-001",
+        "name": "Node 01 - service-state",
+        "type": "service-state",
+        "config": {
+          "service": ""
+        },
+        "x": 72,
+        "y": 36
+      },
+      {
+        "id": "node-002",
+        "name": "Node 02 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample02_1",
+              "value": "example-02-1"
+            }
+          ]
+        },
+        "x": 72,
+        "y": 234
+      },
+      {
+        "id": "node-003",
+        "name": "Node 03 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 72,
+        "y": 432
+      },
+      {
+        "id": "node-004",
+        "name": "Node 04 - finish",
+        "type": "finish",
+        "config": {
+          "result": "skipped",
+          "message": "Synthetic finish 04"
+        },
+        "x": 72,
+        "y": 630
+      },
+      {
+        "id": "node-005",
+        "name": "Node 05 - finish",
+        "type": "finish",
+        "config": {
+          "result": "skipped",
+          "message": "Synthetic finish 05"
+        },
+        "x": 72,
+        "y": 1170
+      },
+      {
+        "id": "node-006",
+        "name": "Node 06 - finish",
+        "type": "finish",
+        "config": {
+          "result": "skipped",
+          "message": "Synthetic finish 06"
+        },
+        "x": 270,
+        "y": 2466
+      },
+      {
+        "id": "node-007",
+        "name": "Node 07 - finish",
+        "type": "finish",
+        "config": {
+          "result": "skipped",
+          "message": "Synthetic finish 07"
+        },
+        "x": 2034,
+        "y": 2160
+      },
+      {
+        "id": "node-008",
+        "name": "Node 08 - finish",
+        "type": "finish",
+        "config": {
+          "result": "skipped",
+          "message": "Synthetic finish 08"
+        },
+        "x": 522,
+        "y": 4320
+      },
+      {
+        "id": "node-009",
+        "name": "Node 09 - finish",
+        "type": "finish",
+        "config": {
+          "result": "skipped",
+          "message": "Synthetic finish 09"
+        },
+        "x": 954,
+        "y": 2142
+      },
+      {
+        "id": "node-010",
+        "name": "Node 10 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample10_1",
+              "value": "example-10-1"
+            },
+            {
+              "key": "sample10_2",
+              "value": "example-10-2"
+            }
+          ]
+        },
+        "x": 72,
+        "y": 1368
+      },
+      {
+        "id": "node-011",
+        "name": "Node 11 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample11_1",
+              "value": "example-11-1"
+            },
+            {
+              "key": "sample11_2",
+              "value": "example-11-2"
+            }
+          ]
+        },
+        "x": 72,
+        "y": 1566
+      },
+      {
+        "id": "node-012",
+        "name": "Node 12 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample12_1",
+              "value": "example-12-1"
+            },
+            {
+              "key": "sample12_2",
+              "value": "example-12-2"
+            }
+          ]
+        },
+        "x": 72,
+        "y": 1764
+      },
+      {
+        "id": "node-013",
+        "name": "Node 13 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample13_1",
+              "value": "example-13-1"
+            },
+            {
+              "key": "sample13_2",
+              "value": "example-13-2"
+            }
+          ]
+        },
+        "x": 72,
+        "y": 1962
+      },
+      {
+        "id": "node-014",
+        "name": "Node 14 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample14_1",
+              "value": "example-14-1"
+            },
+            {
+              "key": "sample14_2",
+              "value": "example-14-2"
+            }
+          ]
+        },
+        "x": 972,
+        "y": 2466
+      },
+      {
+        "id": "node-015",
+        "name": "Node 15 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample15_1",
+              "value": "example-15-1"
+            },
+            {
+              "key": "sample15_2",
+              "value": "example-15-2"
+            }
+          ]
+        },
+        "x": 738,
+        "y": 2466
+      },
+      {
+        "id": "node-016",
+        "name": "Node 16 - context",
+        "type": "context",
+        "config": {
+          "entries": [
+            {
+              "key": "sample16_1",
+              "value": "example-16-1"
+            },
+            {
+              "key": "sample16_2",
+              "value": "example-16-2"
+            }
+          ]
+        },
+        "x": 504,
+        "y": 2466
+      },
+      {
+        "id": "node-017",
+        "name": "Node 17 - http",
+        "type": "http",
+        "config": {
+          "method": "GET",
+          "url": "https://example.invalid/layout/node-17",
+          "headers": "{\"Accept\":\"application/json\"}",
+          "body": "",
+          "onError": "branch",
+          "intent": "read",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        },
+        "x": 738,
+        "y": 2700
+      },
+      {
+        "id": "node-018",
+        "name": "Node 18 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 738,
+        "y": 2952
+      },
+      {
+        "id": "node-019",
+        "name": "Node 19 - find",
+        "type": "find",
+        "config": {
+          "source": "response.body",
+          "field": "sampleKey",
+          "value": "\"sample-value\"",
+          "valueSource": "literal"
+        },
+        "x": 684,
+        "y": 3204
+      },
+      {
+        "id": "node-020",
+        "name": "Node 20 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 684,
+        "y": 3492
+      },
+      {
+        "id": "node-021",
+        "name": "Node 21 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 630,
+        "y": 3762
+      },
+      {
+        "id": "node-022",
+        "name": "Node 22 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 576,
+        "y": 4068
+      },
+      {
+        "id": "node-023",
+        "name": "Node 23 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 1008,
+        "y": 4320
+      },
+      {
+        "id": "node-024",
+        "name": "Node 24 - datetime",
+        "type": "datetime",
+        "config": {
+          "source": "now",
+          "timezone": "UTC",
+          "format": "custom",
+          "pattern": "yyyy/MM/dd HH:mm:ss"
+        },
+        "x": 792,
+        "y": 54
+      },
+      {
+        "id": "node-025",
+        "name": "Node 25 - http",
+        "type": "http",
+        "config": {
+          "method": "GET",
+          "url": "https://example.invalid/layout/node-25",
+          "headers": "{\"Accept\":\"application/json\"}",
+          "body": "",
+          "onError": "stop",
+          "intent": "read",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        },
+        "x": 792,
+        "y": 306
+      },
+      {
+        "id": "node-026",
+        "name": "Node 26 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 792,
+        "y": 558
+      },
+      {
+        "id": "node-027",
+        "name": "Node 27 - http",
+        "type": "http",
+        "config": {
+          "method": "GET",
+          "url": "https://example.invalid/layout/node-27",
+          "headers": "{\"Accept\":\"application/json\"}",
+          "body": "",
+          "onError": "branch",
+          "intent": "read",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        },
+        "x": 738,
+        "y": 828
+      },
+      {
+        "id": "node-028",
+        "name": "Node 28 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 738,
+        "y": 1098
+      },
+      {
+        "id": "node-029",
+        "name": "Node 29 - find",
+        "type": "find",
+        "config": {
+          "source": "response.body",
+          "field": "sampleKey",
+          "value": "\"sample-value\"",
+          "valueSource": "literal"
+        },
+        "x": 684,
+        "y": 1404
+      },
+      {
+        "id": "node-030",
+        "name": "Node 30 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 684,
+        "y": 1746
+      },
+      {
+        "id": "node-031",
+        "name": "Node 31 - datetime",
+        "type": "datetime",
+        "config": {
+          "source": "now",
+          "timezone": "UTC",
+          "format": "custom",
+          "pattern": "yyyy/MM/dd HH:mm:ss"
+        },
+        "x": 1332,
+        "y": 54
+      },
+      {
+        "id": "node-032",
+        "name": "Node 32 - http",
+        "type": "http",
+        "config": {
+          "method": "GET",
+          "url": "https://example.invalid/layout/node-32",
+          "headers": "{\"Accept\":\"application/json\"}",
+          "body": "",
+          "onError": "stop",
+          "intent": "read",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        },
+        "x": 1332,
+        "y": 306
+      },
+      {
+        "id": "node-033",
+        "name": "Node 33 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 1332,
+        "y": 558
+      },
+      {
+        "id": "node-034",
+        "name": "Node 34 - http",
+        "type": "http",
+        "config": {
+          "method": "GET",
+          "url": "https://example.invalid/layout/node-34",
+          "headers": "{\"Accept\":\"application/json\"}",
+          "body": "",
+          "onError": "branch",
+          "intent": "read",
+          "outputMode": "none",
+          "outputPaths": "",
+          "idempotency": "none",
+          "timeoutMs": 5000,
+          "retries": 0
+        },
+        "x": 1278,
+        "y": 828
+      },
+      {
+        "id": "node-035",
+        "name": "Node 35 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 1278,
+        "y": 1098
+      },
+      {
+        "id": "node-036",
+        "name": "Node 36 - find",
+        "type": "find",
+        "config": {
+          "source": "response.body",
+          "field": "sampleKey",
+          "value": "\"sample-value\"",
+          "valueSource": "literal"
+        },
+        "x": 1224,
+        "y": 1404
+      },
+      {
+        "id": "node-037",
+        "name": "Node 37 - condition",
+        "type": "condition",
+        "config": {
+          "field": "trigger.service",
+          "operator": "equals",
+          "value": "\"sample-a\"",
+          "valueSource": "literal",
+          "rules": ""
+        },
+        "x": 1224,
+        "y": 1746
+      },
+      {
+        "id": "node-038",
+        "name": "Node 38 - switch",
+        "type": "switch",
+        "config": {
+          "field": "trigger.service",
+          "cases": [
+            {
+              "id": "case-01",
+              "value": "sample-a"
+            },
+            {
+              "id": "case-02",
+              "value": "sample-b"
+            },
+            {
+              "id": "case-03",
+              "value": "sample-c"
+            },
+            {
+              "id": "case-04",
+              "value": "sample-d"
+            }
+          ]
+        },
+        "x": 72,
+        "y": 828
+      },
+      {
+        "id": "node-039",
+        "name": "Node 39 - switch",
+        "type": "switch",
+        "config": {
+          "field": "trigger.service",
+          "cases": [
+            {
+              "id": "case-01",
+              "value": "sample-a"
+            },
+            {
+              "id": "case-02",
+              "value": "sample-b"
+            },
+            {
+              "id": "case-03",
+              "value": "sample-c"
+            }
+          ]
+        },
+        "x": 72,
+        "y": 2160
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-001",
+        "from": "node-001",
+        "to": "node-002",
+        "port": "next"
+      },
+      {
+        "id": "edge-002",
+        "from": "node-002",
+        "to": "node-003",
+        "port": "next"
+      },
+      {
+        "id": "edge-003",
+        "from": "node-003",
+        "to": "node-038",
+        "port": "true"
+      },
+      {
+        "id": "edge-004",
+        "from": "node-003",
+        "to": "node-004",
+        "port": "false"
+      },
+      {
+        "id": "edge-005",
+        "from": "node-010",
+        "to": "node-039",
+        "port": "next"
+      },
+      {
+        "id": "edge-006",
+        "from": "node-011",
+        "to": "node-039",
+        "port": "next"
+      },
+      {
+        "id": "edge-007",
+        "from": "node-012",
+        "to": "node-039",
+        "port": "next"
+      },
+      {
+        "id": "edge-008",
+        "from": "node-013",
+        "to": "node-039",
+        "port": "next"
+      },
+      {
+        "id": "edge-009",
+        "from": "node-014",
+        "to": "node-017",
+        "port": "next"
+      },
+      {
+        "id": "edge-010",
+        "from": "node-015",
+        "to": "node-017",
+        "port": "next"
+      },
+      {
+        "id": "edge-011",
+        "from": "node-016",
+        "to": "node-017",
+        "port": "next"
+      },
+      {
+        "id": "edge-012",
+        "from": "node-017",
+        "to": "node-007",
+        "port": "error"
+      },
+      {
+        "id": "edge-013",
+        "from": "node-017",
+        "to": "node-018",
+        "port": "next"
+      },
+      {
+        "id": "edge-014",
+        "from": "node-019",
+        "to": "node-007",
+        "port": "zero"
+      },
+      {
+        "id": "edge-015",
+        "from": "node-019",
+        "to": "node-007",
+        "port": "many"
+      },
+      {
+        "id": "edge-016",
+        "from": "node-018",
+        "to": "node-019",
+        "port": "true"
+      },
+      {
+        "id": "edge-017",
+        "from": "node-018",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-018",
+        "from": "node-019",
+        "to": "node-020",
+        "port": "one"
+      },
+      {
+        "id": "edge-019",
+        "from": "node-020",
+        "to": "node-021",
+        "port": "true"
+      },
+      {
+        "id": "edge-020",
+        "from": "node-020",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-021",
+        "from": "node-021",
+        "to": "node-022",
+        "port": "true"
+      },
+      {
+        "id": "edge-022",
+        "from": "node-021",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-023",
+        "from": "node-022",
+        "to": "node-008",
+        "port": "true"
+      },
+      {
+        "id": "edge-024",
+        "from": "node-022",
+        "to": "node-023",
+        "port": "false"
+      },
+      {
+        "id": "edge-025",
+        "from": "node-023",
+        "to": "node-024",
+        "port": "true"
+      },
+      {
+        "id": "edge-026",
+        "from": "node-023",
+        "to": "node-031",
+        "port": "false"
+      },
+      {
+        "id": "edge-027",
+        "from": "node-024",
+        "to": "node-025",
+        "port": "next"
+      },
+      {
+        "id": "edge-028",
+        "from": "node-025",
+        "to": "node-026",
+        "port": "next"
+      },
+      {
+        "id": "edge-029",
+        "from": "node-027",
+        "to": "node-007",
+        "port": "error"
+      },
+      {
+        "id": "edge-030",
+        "from": "node-026",
+        "to": "node-027",
+        "port": "true"
+      },
+      {
+        "id": "edge-031",
+        "from": "node-026",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-032",
+        "from": "node-027",
+        "to": "node-028",
+        "port": "next"
+      },
+      {
+        "id": "edge-033",
+        "from": "node-029",
+        "to": "node-007",
+        "port": "zero"
+      },
+      {
+        "id": "edge-034",
+        "from": "node-029",
+        "to": "node-007",
+        "port": "many"
+      },
+      {
+        "id": "edge-035",
+        "from": "node-028",
+        "to": "node-029",
+        "port": "true"
+      },
+      {
+        "id": "edge-036",
+        "from": "node-028",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-037",
+        "from": "node-029",
+        "to": "node-030",
+        "port": "one"
+      },
+      {
+        "id": "edge-038",
+        "from": "node-030",
+        "to": "node-009",
+        "port": "true"
+      },
+      {
+        "id": "edge-039",
+        "from": "node-030",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-040",
+        "from": "node-031",
+        "to": "node-032",
+        "port": "next"
+      },
+      {
+        "id": "edge-041",
+        "from": "node-032",
+        "to": "node-033",
+        "port": "next"
+      },
+      {
+        "id": "edge-042",
+        "from": "node-034",
+        "to": "node-007",
+        "port": "error"
+      },
+      {
+        "id": "edge-043",
+        "from": "node-033",
+        "to": "node-034",
+        "port": "true"
+      },
+      {
+        "id": "edge-044",
+        "from": "node-033",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-045",
+        "from": "node-034",
+        "to": "node-035",
+        "port": "next"
+      },
+      {
+        "id": "edge-046",
+        "from": "node-036",
+        "to": "node-007",
+        "port": "zero"
+      },
+      {
+        "id": "edge-047",
+        "from": "node-036",
+        "to": "node-007",
+        "port": "many"
+      },
+      {
+        "id": "edge-048",
+        "from": "node-035",
+        "to": "node-036",
+        "port": "true"
+      },
+      {
+        "id": "edge-049",
+        "from": "node-035",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-050",
+        "from": "node-036",
+        "to": "node-037",
+        "port": "one"
+      },
+      {
+        "id": "edge-051",
+        "from": "node-037",
+        "to": "node-009",
+        "port": "true"
+      },
+      {
+        "id": "edge-052",
+        "from": "node-037",
+        "to": "node-007",
+        "port": "false"
+      },
+      {
+        "id": "edge-053",
+        "from": "node-038",
+        "to": "node-010",
+        "port": "case-01"
+      },
+      {
+        "id": "edge-054",
+        "from": "node-038",
+        "to": "node-011",
+        "port": "case-02"
+      },
+      {
+        "id": "edge-055",
+        "from": "node-038",
+        "to": "node-012",
+        "port": "case-03"
+      },
+      {
+        "id": "edge-056",
+        "from": "node-038",
+        "to": "node-013",
+        "port": "case-04"
+      },
+      {
+        "id": "edge-057",
+        "from": "node-039",
+        "to": "node-014",
+        "port": "case-01"
+      },
+      {
+        "id": "edge-058",
+        "from": "node-039",
+        "to": "node-015",
+        "port": "case-02"
+      },
+      {
+        "id": "edge-059",
+        "from": "node-039",
+        "to": "node-016",
+        "port": "case-03"
+      },
+      {
+        "id": "edge-060",
+        "from": "node-038",
+        "to": "node-005",
+        "port": "default"
+      },
+      {
+        "id": "edge-061",
+        "from": "node-039",
+        "to": "node-006",
+        "port": "default"
+      }
+    ]
+  },
+  "requiredSecrets": []
+}
