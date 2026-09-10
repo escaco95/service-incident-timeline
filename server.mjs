@@ -2,6 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { importWorkflow, exportWorkflow, fileSchema } from './lib/workflow-file.mjs';
 import { LIMITS } from './public/workflow-spec.js';
+import { DRY_RUN_LIMITS } from './public/workflow-dry-run-spec.js';
 import { Workflows } from './lib/workflows.mjs';
 import { WorkflowEngine } from './lib/workflow-engine.mjs';
 import { LogMaintenance } from './lib/log-maintenance.mjs';
@@ -31,6 +32,11 @@ const ASSETS = new Map([
   ['/workflow-spec.js', ['workflow-spec.js', 'text/javascript; charset=utf-8']],
   ['/workflow-file-ui.js', ['workflow-file-ui.js', 'text/javascript; charset=utf-8']],
   ['/workflow-ui.js', ['workflow-ui.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-layout.js', ['workflow-layout.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-context-ui.js', ['workflow-context-ui.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-dry-run-ui.js', ['workflow-dry-run-ui.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-dry-run-spec.js', ['workflow-dry-run-spec.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-dry-run-events.js', ['workflow-dry-run-events.js', 'text/javascript; charset=utf-8']],
   ['/workflow.css', ['workflow.css', 'text/css; charset=utf-8']],
   ['/theme.js', ['theme.js', 'text/javascript; charset=utf-8']],
   ['/date-utils.js', ['date-utils.js', 'text/javascript; charset=utf-8']],
@@ -294,9 +300,13 @@ export async function createApp(options = {}) {
         if (req.method === 'GET') return send(res, 200, { ...workflows.list(), engine: workflowEngine.status() });
         if (req.method === 'POST') return send(res, 201, await workflows.create(await json(req, LIMITS.bytes + 256 * 1024)));
       }
-      const workflow = /^\/api\/workflows\/([0-9a-f-]{36})(?:\/(enabled|run|export))?$/.exec(pathname);
+      const workflow = /^\/api\/workflows\/([0-9a-f-]{36})(?:\/(enabled|run|export|dry-run|dry-run-setup|dry-run-service-event))?$/.exec(pathname);
       if (workflow) {
         const id = workflow[1], action = workflow[2];
+        if (action === 'dry-run-service-event' && req.method === 'POST') return send(res, 200, await workflows.dryRunServiceEvent(id, await json(req, 4096)));
+        if (action === 'dry-run-setup' && req.method === 'GET') return send(res, 200, workflows.readDryRunSetup(id));
+        if (action === 'dry-run-setup' && req.method === 'PUT') return send(res, 200, await workflows.saveDryRunSetup(id, await json(req, DRY_RUN_LIMITS.bytes + 1024)));
+        if (action === 'dry-run' && req.method === 'POST') return send(res, 200, workflows.dryRun(id, await json(req, LIMITS.bytes + DRY_RUN_LIMITS.bytes + 1024)));
         if (action === 'export' && req.method === 'GET') { const file = exportWorkflow(workflows.read(id)); res.setHeader('Content-Disposition', 'attachment; filename=workflow-' + id + '.json'); return send(res, 200, file); }
         if (!action && req.method === 'GET') return send(res, 200, workflows.read(id));
         if (!action && req.method === 'PUT') return send(res, 200, await workflows.save(id, await json(req, LIMITS.bytes + 256 * 1024)));

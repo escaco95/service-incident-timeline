@@ -21,7 +21,11 @@ async function fixture(t, extra = {}) {
   const app = await createApp(options);
   await app.vault.setup('workflow-test-password'); await app.workflowEngine.unlock();
   t.after(async () => { await app.close(); assert.equal(path.dirname(directory), path.resolve(os.tmpdir())); assert.ok(path.basename(directory).startsWith('timeline-workflows-')); await fs.rm(directory, { recursive: true, force: true }); });
-  return { app, options, directory, time: value => { at = value; }, async create(def) { let flow = await app.workflows.create({ ...def, requestId: randomUUID() }); return app.workflows.save(flow.id, { ...flow, secrets: { ACCESS: 'private-workflow-value' } }); } };
+  return { app, options, directory, time: value => { at = value; }, async create(def) { const flow = await app.workflows.create({ ...def, requestId: randomUUID() }); await legacySecrets(app, flow.id); return app.workflows.save(flow.id, flow); } };
+}
+async function legacySecrets(app, id) {
+  // Seed a pre-existing record: new secret registration is no longer supported.
+  await app.vault.mutate(state => { state.workflows.find(flow => flow.id === id).secrets = { ACCESS: 'private-workflow-value' }; }, { scope: {} });
 }
 async function settle(app, id) {
   await app.workflowEngine.tick();
@@ -62,7 +66,7 @@ test('실제 HTTP, 작성자 조건 판정, 비밀 가림, 중복 방지와 같�
   const remote = http.createServer(async (req, res) => { let body = ''; for await (const chunk of req) body += chunk; calls.push({ body: JSON.parse(body), authorization: req.headers.authorization }); res.writeHead(500, { 'Content-Type': 'application/json', 'Set-Cookie': 'private-cookie' }); res.end(JSON.stringify({ echo: req.headers.authorization, accepted: true })); });
   await new Promise(resolve => remote.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => remote.close(resolve)));
   const { app } = await fixture(t);
-  const event = await seedEvent(app), flow = await (async () => { const value = await app.workflows.create({ ...definition('start', `http://127.0.0.1:${remote.address().port}`), requestId: randomUUID() }); return app.workflows.save(value.id, { ...value, secrets: { ACCESS: 'private-workflow-value' } }); })();
+  const event = await seedEvent(app), flow = await (async () => { const value = await app.workflows.create({ ...definition('start', `http://127.0.0.1:${remote.address().port}`), requestId: randomUUID() }); await legacySecrets(app, value.id); return app.workflows.save(value.id, value); })();
   assert.equal(flow.enabled, false); assert.equal('secrets' in flow, false);
   await assert.rejects(app.workflows.run(flow.id, { requestId: randomUUID(), version: flow.version }), /이벤트/);
   const input = { eventId: event.id, requestId: randomUUID(), version: flow.version };
@@ -73,10 +77,11 @@ test('실제 HTTP, 작성자 조건 판정, 비밀 가림, 중복 방지와 같�
   assert.equal(result.steps.find(step => step.type === 'http').output.status, 500);
   for (const value of ['private-workflow-value', 'private-cookie']) assert.equal(JSON.stringify(result).includes(value), false);
   assert.equal((await app.workflows.run(flow.id, input)).id, queued.id);
-  const saved = await app.workflows.save(flow.id, { ...flow, name: '바뀐 정의', nodes: minimal().nodes, edges: minimal().edges, secrets: { ACCESS: 'rotated-private-value' } });
+  await assert.rejects(app.workflows.save(flow.id, { ...flow, secrets: { ACCESS: 'rotated-private-value' } }), /추가·수정/);
+  const saved = await app.workflows.save(flow.id, { ...flow, name: '바뀐 정의', nodes: minimal().nodes, edges: minimal().edges });
   const rerun = await app.workflows.rerun(result.id, { requestId: randomUUID() }), repeated = await settle(app, rerun.id);
   assert.equal(repeated.status, 'success'); assert.equal(repeated.definitionVersion, flow.definitionVersion); assert.equal(repeated.parentId, result.id);
-  assert.equal(calls.length, 2); assert.deepEqual(calls[0].body, calls[1].body); assert.equal(calls[1].authorization, 'Bearer rotated-private-value');
+  assert.equal(calls.length, 2); assert.deepEqual(calls[0].body, calls[1].body); assert.equal(calls[1].authorization, 'Bearer private-workflow-value');
   assert.equal(JSON.stringify((await app.workflows.readRun(result.id))), JSON.stringify(result));
   assert.equal((await app.workflows.read(flow.id)).activity.runId, rerun.id);
   const encrypted = await fs.readFile(app.vault.file, 'utf8'); assert.equal(encrypted.includes('private'), false);

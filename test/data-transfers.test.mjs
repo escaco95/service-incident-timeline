@@ -39,7 +39,9 @@ async function fixture(t, workflows = {}) {
       await app.vault.saveServices({ version: app.vault.state.catalog.version, services: [{ id: 'svc', name: '복원 서비스', active: true }] });
       const event = (await app.vault.add({ title: '복원할 이벤트', description: '한글 내용', services: [{ kind: 'catalog', id: 'svc' }], category: 'incident', start: '2026-01-01T00:00:00.000Z', end: '2026-01-02T00:00:00.000Z' })).event;
       let flow = await app.workflows.create({ name: '복원할 워크플로우', requestId: randomUUID(), nodes: [{ id: 'cron', type: 'cron', name: '예약', x: 36, y: 36, config: { expression: '* * * * *', timezone: 'UTC' } }], edges: [] });
-      flow = await app.workflows.save(flow.id, { ...flow, secrets: { ACCESS_TOKEN: 'plain-export-private-value' } });
+      // Existing secrets must still survive backup and restore.
+      await app.vault.mutate(state => { state.workflows.find(item => item.id === flow.id).secrets = { ACCESS_TOKEN: 'plain-export-private-value' }; }, { scope: {} });
+      flow = app.workflows.read(flow.id);
       const run = await app.workflows.run(flow.id, { version: flow.version, requestId: randomUUID() });
       const brand = (await this.call('/api/settings/branding')).data;
       await this.call('/api/settings/branding', 'PUT', { version: brand.version, branding: { ...brand.branding, name: '백업 시스템', passwordNotice: '백업 안내' } });

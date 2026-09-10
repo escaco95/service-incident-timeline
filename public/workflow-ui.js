@@ -1,6 +1,9 @@
 import { randomUUID } from './random-id.js';
 import { LIMITS, ports as outputs, TRIGGERS } from './workflow-spec.js';
 import { createWorkflowFiles } from './workflow-file-ui.js';
+import { createContextEditor } from './workflow-context-ui.js';
+import { createDryRunUI } from './workflow-dry-run-ui.js';
+import { GRID, CANVAS_SIZE, NODE_WIDTH as W, NODE_HEIGHT as H, nodePosition, arrangeNodes, fitNodesToCanvas, newNodePosition, capCameraPan } from './workflow-layout.js';
 // Local editor drafts are separate from the saved definition used by the server.
 const TYPES = {
   start: { label: '이벤트 시작', group: 'trigger', icon: 'play', hint: '이벤트가 시작될 때' },
@@ -9,6 +12,7 @@ const TYPES = {
   'service-state': { label: '서비스 상태 변경', group: 'trigger', icon: 'flag', hint: '중첩 집계 결과가 바뀔 때' },
   find: { label: '목록 검색', group: 'condition', icon: 'search', hint: '0건·1건·복수 건 분기' },
   datetime: { label: '날짜·시각', group: 'action', icon: 'clock', hint: '현재 시각과 시간대 변환' },
+  context: { label: '컨텍스트 값 주입', group: 'action', icon: 'plus', hint: '실행 중 사용할 키·값 추가' },
   condition: { label: '조건', group: 'condition', icon: 'split', hint: '조건에 따라 분기' },
   http: { label: 'API 호출', group: 'action', icon: 'globe', hint: 'HTTP 요청 구성하기' },
   finish: { label: '워크플로우 종료', group: 'action', icon: 'check', hint: '결과를 정하고 종료' }
@@ -26,6 +30,15 @@ const DRAWINGS = {
   fit: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><rect x="8" y="8" width="8" height="8" rx="2"/>',
   arrange: '<rect x="8" y="2" width="8" height="6" rx="1"/><rect x="2" y="16" width="8" height="6" rx="1"/><rect x="14" y="16" width="8" height="6" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/>',
   trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>',
+  copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>',
+  upload: '<path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/>',
+  download: '<path d="M12 3v13m-5-5 5 5 5-5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/>',
+  undo: '<path d="m8 4-5 5 5 5M3 9h10a7 7 0 0 1 0 14" transform="translate(0 -2)"/>',
+  reload: '<path d="M20 7v5h-5M4 17v-5h5M6 5a8 8 0 0 1 14 7M18 19a8 8 0 0 1-14-7"/>',
+  history: '<path d="M3 4v5h5M3 9a9 9 0 1 1 0 6M12 7v5l4 2"/>',
+  test: '<path d="M9 3h6m-5 0v7L4 20a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1l-6-10V3M7 15h10"/>',
+  run: '<path d="m7 4 14 8-14 8V4Z"/>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/>',
   link: '<path d="m10 13 4-4m-6 6-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 2 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 1)"/>',
   close: '<path d="m6 6 12 12M6 18 18 6"/>',
   back: '<path d="m10 5-7 7 7 7M3 12h18"/>',
@@ -34,17 +47,22 @@ const DRAWINGS = {
   failure: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/>',
   never: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>'
 };
-const W = 230, H = 132, GRID = 18;
-const snap = (value, minimum = 0) => Math.max(Math.ceil(minimum / GRID), Math.round(value / GRID)) * GRID;
 const svg = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${DRAWINGS[name] ?? DRAWINGS.play}</svg>`;
+const EDITOR_TOOL_GROUPS = [
+  ['JSON 파일', [['upload', 'upload', 'JSON 가져오기'], ['download', 'download', 'JSON 다운로드 · 저장된 정의']]],
+  ['구성 편집', [['arrange', 'arrange', '노드 자동 정렬'], ['revert', 'undo', '저장된 내용으로 되돌리기'], ['reload', 'reload', '다시 불러오기']]],
+  ['실행 및 저장', [['history', 'history', '실행 이력'], ['dry-run', 'test', 'Dry-Run 테스트'], ['run', 'run', '수동 실행 · 저장된 구성으로 실제 API 호출'], ['save', 'save', '저장']]]
+];
+const editorToolbar = () => `<div class="wf-toolbar" role="group" aria-label="워크플로우 작업">${EDITOR_TOOL_GROUPS.map(([label, items]) => `<div class="wf-toolbar-group" role="group" aria-label="${label}">${items.map(([command, icon, title]) => `<button type="button" class="wf-icon-button${command === 'save' ? ' wf-save-button' : ''}" data-wf-command="${command}" title="${title}" aria-label="${title}">${svg(icon)}</button>`).join('')}</div>`).join('')}</div>`;
 const outputLabel = port => ({ true: '일치', false: '불일치', next: '다음', error: '통신 오류', zero: '0건', one: '1건', many: '복수 건' })[port];
 
 function makeNode(type, id, x, y) {
-  return { id, type, x: snap(x, 16), y: snap(y, 24), name: TYPES[type].label, config: {
+  return { id, type, ...nodePosition(x, y), name: TYPES[type].label, config: {
     ...(['start', 'end'].includes(type) ? { service: '모든 서비스' } : {}),
     ...(type === 'service-state' ? { service: '' } : {}),
     ...(type === 'find' ? { source: 'response.body', field: 'id', value: '', valueSource: 'literal' } : {}),
     ...(type === 'datetime' ? { source: 'now', timezone: 'Asia/Seoul', format: 'iso' } : {}),
+    ...(type === 'context' ? { entries: [] } : {}),
     ...(type === 'cron' ? { expression: '0 9 * * 1-5', timezone: 'Asia/Seoul' } : {}),
     ...(type === 'condition' ? { field: 'event.category', operator: 'equals', value: 'incident' } : {}),
     ...(type === 'http' ? { method: 'POST', url: '', headers: '{\n  "Content-Type": "application/json"\n}', body: '{\n  "title": "{{event.title}}"\n}', onError: 'stop', timeoutMs: 10000, retries: 0 } : {}),
@@ -61,6 +79,8 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   let search = '', pendingDelete = null;
   let host, controller, gridObserver, connecting = null, selectedEdge = null, drag = null, suppressClick = false;
   const files = createWorkflowFiles({ api, escape, generation, active, toast, current: () => mode === 'editor' ? current() : null, imported: (data, isNew) => { if (isNew) { accept(data); currentId = data.id; } else Object.assign(current(), data, { selected: data.nodes[0]?.id ?? null }); mountEditor(); } });
+  const contextEditor = createContextEditor({ escape });
+  const dryRunUI = createDryRunUI({ api, escape, formatTime, generation, authenticated, active, current: () => mode === 'editor' ? current() : null, types: TYPES });
   const current = () => workflows.find(item => item.id === currentId);
   const find = id => current().nodes.find(node => node.id === id);
   const query = selector => host?.querySelector(selector);
@@ -207,11 +227,13 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     query('.wf-list-rows').innerHTML = filtered.length ? filtered.map(flow => {
       const activity = flow.activity ?? { status: 'never', lastRun: null, lastSuccess: null, duration: null };
       const trigger = flow.nodes.find(node => TYPES[node.type].group === 'trigger');
-      return `<tr><td class="wf-status-cell"><span class="wf-run-status ${activity.status}" role="img" aria-label="마지막 실행: ${STATUS_LABELS[activity.status]}" title="${STATUS_LABELS[activity.status]}">${svg(['queued', 'running'].includes(activity.status) ? 'clock' : ['canceled', 'interrupted', 'review', 'skipped'].includes(activity.status) ? 'failure' : activity.status)}</span></td><td class="wf-name-cell"><button class="wf-flow-link" data-wf-open="${escape(flow.id)}" title="노드 구성 편집. 변경 내용은 저장 버튼으로 반영합니다.">${escape(flow.name || '이름 없는 워크플로우')}</button><small>${trigger ? TYPES[trigger.type].label : '시작 이벤트 미설정'} · ${flow.nodes.length}개 노드${dirty(flow) ? ' · 저장 전 수정' : ''} <button class="wf-history-link" data-wf-history="${escape(flow.id)}">실행 이력</button></small></td><td>${date(activity.lastRun)}</td><td>${date(activity.lastSuccess)}</td><td class="wf-duration-cell">${activity.duration === null ? '<span class="wf-no-history">—</span>' : activity.duration.toFixed(2)}</td><td class="wf-enabled-cell"><button type="button" class="wf-enable-toggle" data-wf-toggle="${escape(flow.id)}" role="switch" aria-checked="${flow.enabled}" aria-label="${escape(flow.name || '이름 없는 워크플로우')} 자동 실행" title="${enabledHint(flow.enabled)}"><span class="wf-switch-track" aria-hidden="true"></span><span data-wf-enabled-label aria-hidden="true">${flow.enabled ? 'ON' : 'OFF'}</span></button></td><td class="wf-row-actions"><button class="wf-icon-button wf-delete-flow" data-wf-delete-flow="${escape(flow.id)}" title="워크플로우 삭제" aria-label="${escape(flow.name || '이름 없는 워크플로우')} 삭제">${svg('trash')}</button></td></tr>`;
-    }).join('') : `<tr><td colspan="7" class="wf-list-empty">${svg(workflows.length ? 'search' : 'arrange')}<strong>${!loaded ? '워크플로우를 불러오고 있습니다…' : workflows.length ? '일치하는 워크플로우가 없습니다.' : '등록된 워크플로우가 없습니다.'}</strong><span>${workflows.length ? '다른 이름으로 검색해 보세요.' : '새 워크플로우를 추가해 보세요.'}</span>${workflows.length ? '<button class="wf-text-button" data-wf-command="clear-search">검색 초기화</button>' : ''}</td></tr>`;
+      return `<tr><td class="wf-status-cell"><span class="wf-run-status ${activity.status}" role="img" aria-label="마지막 실행: ${STATUS_LABELS[activity.status]}" title="${STATUS_LABELS[activity.status]}">${svg(['queued', 'running'].includes(activity.status) ? 'clock' : ['canceled', 'interrupted', 'review', 'skipped'].includes(activity.status) ? 'failure' : activity.status)}</span></td><td class="wf-name-cell"><button class="wf-flow-link" data-wf-open="${escape(flow.id)}" title="노드 구성 편집. 변경 내용은 저장 버튼으로 반영합니다.">${escape(flow.name || '이름 없는 워크플로우')}</button><small>${trigger ? TYPES[trigger.type].label : '시작 이벤트 미설정'} · ${flow.nodes.length}개 노드${dirty(flow) ? ' · 저장 전 수정' : ''} <button class="wf-history-link" data-wf-history="${escape(flow.id)}">실행 이력</button></small></td><td class="wf-revision-cell"><span class="wf-revision-badge">V${escape(flow.definitionVersion)}</span></td><td>${date(activity.lastRun)}</td><td>${date(activity.lastSuccess)}</td><td class="wf-duration-cell">${activity.duration === null ? '<span class="wf-no-history">—</span>' : activity.duration.toFixed(2)}</td><td class="wf-enabled-cell"><button type="button" class="wf-enable-toggle" data-wf-toggle="${escape(flow.id)}" role="switch" aria-checked="${flow.enabled}" aria-label="${escape(flow.name || '이름 없는 워크플로우')} 자동 실행" title="${enabledHint(flow.enabled)}"><span class="wf-switch-track" aria-hidden="true"></span><span data-wf-enabled-label aria-hidden="true">${flow.enabled ? 'ON' : 'OFF'}</span></button></td><td class="wf-row-actions"><button class="wf-icon-button wf-delete-flow" data-wf-delete-flow="${escape(flow.id)}" title="워크플로우 삭제" aria-label="${escape(flow.name || '이름 없는 워크플로우')} 삭제">${svg('trash')}</button></td></tr>`;
+    }).join('') : `<tr><td colspan="8" class="wf-list-empty">${svg(workflows.length ? 'search' : 'arrange')}<strong>${!loaded ? '워크플로우를 불러오고 있습니다…' : workflows.length ? '일치하는 워크플로우가 없습니다.' : '등록된 워크플로우가 없습니다.'}</strong><span>${workflows.length ? '다른 이름으로 검색해 보세요.' : '새 워크플로우를 추가해 보세요.'}</span>${workflows.length ? '<button class="wf-text-button" data-wf-command="clear-search">검색 초기화</button>' : ''}</td></tr>`;
   }
 
   function mountList() {
+    dryRunUI.close();
+    contextEditor.close();
     mode = 'list';
     pendingDelete = null; deleteDialog.close();
     gridObserver?.disconnect();
@@ -221,7 +243,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     host.innerHTML = `<section class="wf-workspace wf-list-workspace" aria-label="워크플로우 목록">
       <div class="overview"><section class="summary wf-summary" aria-label="워크플로우 요약" title="전체 워크플로우의 마지막 실행 결과 기준">${dateSummary()}<div class="summary-items" data-wf-summary></div></section></div>
       <section class="wf-list-card" aria-label="등록된 워크플로우"><div class="wf-list-toolbar"><div class="wf-list-title"><h1>등록된 워크플로우 <span data-wf-list-count></span></h1></div><div class="wf-list-actions"><label class="wf-list-search">${svg('search')}<input type="search" data-wf-search value="${escape(search)}" placeholder="워크플로우 이름 검색" aria-label="워크플로우 이름 검색" maxlength="100"></label><button class="button secondary" data-wf-command="services">서비스 상태</button><button class="button secondary" data-wf-command="upload">JSON 가져오기</button><button class="button primary" data-wf-command="new">${svg('plus')} 새 워크플로우</button></div></div>
-      <p class="form-error" data-wf-error hidden></p><div class="wf-table-scroll" tabindex="0" role="region" aria-label="워크플로우 목록 표"><table class="wf-list-table"><thead><tr><th scope="col" class="wf-status-cell"><span title="마지막 실행 상태">상태</span></th><th scope="col" class="wf-name-cell">워크플로우 이름</th><th scope="col">마지막 실행일자</th><th scope="col">마지막 성공일자</th><th scope="col" class="wf-duration-cell">마지막 동작 시간 <span>(sec)</span></th><th scope="col" class="wf-enabled-cell">자동 실행</th><th scope="col" class="wf-row-actions">삭제</th></tr></thead><tbody class="wf-list-rows"></tbody></table></div>
+      <p class="form-error" data-wf-error hidden></p><div class="wf-table-scroll" tabindex="0" role="region" aria-label="워크플로우 목록 표"><table class="wf-list-table"><thead><tr><th scope="col" class="wf-status-cell"><span title="마지막 실행 상태">상태</span></th><th scope="col" class="wf-name-cell">워크플로우 이름</th><th scope="col" class="wf-revision-cell">리비전</th><th scope="col">마지막 실행일자</th><th scope="col">마지막 성공일자</th><th scope="col" class="wf-duration-cell">마지막 동작 시간 <span>(sec)</span></th><th scope="col" class="wf-enabled-cell">자동 실행</th><th scope="col" class="wf-row-actions">삭제</th></tr></thead><tbody class="wf-list-rows"></tbody></table></div>
       </section>
     </section>`;
     const settings = { signal: controller.signal };
@@ -232,6 +254,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function subtitle(node) {
     const c = node.config;
+    if (node.type === 'context') return `${c.entries.length}개 키·값 · 더블 클릭하여 편집`;
     if (node.type === 'http') return c.url || '호출할 URL을 입력하세요';
     if (node.type === 'condition') return `${c.field} ${ { equals: '=', notEquals: '≠', contains: '포함', exists: '값 있음', gt: '>', gte: '≥', lt: '<', lte: '≤' }[c.operator]} ${c.operator === 'exists' ? '' : c.value}`;
     if (node.type === 'cron') return `${c.expression} · ${c.timezone}`;
@@ -243,7 +266,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     const type = TYPES[node.type], isTrigger = type.group === 'trigger';
     return `<article class="wf-node wf-${type.group}${current().selected === node.id && !selectedEdge ? ' is-selected' : ''}" data-node-id="${escape(node.id)}" style="left:${node.x}px;top:${node.y}px" aria-label="${escape(node.name)} 노드">
       ${!isTrigger ? `<button class="wf-port wf-input" data-wf-input="${escape(node.id)}" aria-label="${escape(node.name)}에 연결" title="이 노드로 연결"></button>` : ''}
-      <button class="wf-node-select" data-wf-select="${escape(node.id)}" aria-pressed="${current().selected === node.id && !selectedEdge}"><span class="wf-node-top"><span class="wf-type-icon">${svg(type.icon)}</span><span><small>${type.label}</small><strong>${escape(node.name)}</strong></span></span><span class="wf-node-description">${escape(subtitle(node))}</span><span class="wf-node-caption">${node.type === 'http' ? `<b>${escape(node.config.method)}</b> HTTP 요청` : isTrigger ? '시작점' : node.type === 'condition' ? '두 갈래로 분기' : '이 경로의 마지막 동작'}</span></button>
+      <button class="wf-node-select" data-wf-select="${escape(node.id)}" aria-pressed="${current().selected === node.id && !selectedEdge}"><span class="wf-node-top"><span class="wf-type-icon">${svg(type.icon)}</span><span><small>${type.label}</small><strong>${escape(node.name)}</strong></span></span><span class="wf-node-description">${escape(subtitle(node))}</span><span class="wf-node-caption">${node.type === 'http' ? `<b>${escape(node.config.method)}</b> HTTP 요청` : node.type === 'context' ? '이후 노드에서 context.키로 사용' : isTrigger ? '시작점' : node.type === 'condition' ? '두 갈래로 분기' : '이 경로의 마지막 동작'}</span></button>
       ${outputs(node).map(port => `<button class="wf-port wf-output ${port}${connecting?.from === node.id && connecting.port === port ? ' is-connecting' : ''}" data-wf-output="${escape(node.id)}" data-port="${port}" aria-label="${escape(node.name)} ${outputLabel(port)} 연결" title="노드 아래의 연결점을 누른 뒤 다음 노드를 선택하세요."><span>${outputLabel(port)}</span></button>`).join('')}
     </article>`;
   }
@@ -278,11 +301,12 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function sizeCanvas() {
-    const world = query('.wf-world');
-    if (!world) return;
-    const { width, height } = dimensions(), zoom = current().zoom;
+    const world = query('.wf-world'), stage = query('.wf-stage'), flow = current();
+    if (!world || !stage || !flow) return;
+    const { width, height } = dimensions(), zoom = flow.zoom;
+    if (stage.clientWidth && stage.clientHeight) Object.assign(flow, capCameraPan(flow.panX ?? 0, flow.panY ?? 0, zoom, stage.clientWidth, stage.clientHeight));
     world.style.width = `${width}px`; world.style.height = `${height}px`;
-    world.style.transform = `translate(${current().panX ?? 0}px, ${current().panY ?? 0}px) scale(${zoom})`;
+    world.style.transform = `translate(${flow.panX ?? 0}px, ${flow.panY ?? 0}px) scale(${zoom})`;
     query('[data-wf-zoom-label]').textContent = `${Math.round(zoom * 100)}%`;
     syncGrid();
   }
@@ -364,26 +388,81 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (['start', 'end'].includes(node.type)) fields = `${field('대상 서비스', 'service', c.service, 'maxlength="100"')}<p class="wf-help">‘모든 서비스’ 또는 서비스 ID·선택 당시 표시명을 입력하세요.</p><div class="wf-note">입력한 ${node.type === 'start' ? '시작' : '종료'} 시각에 실행합니다. 지난 시각은 소급 실행하지 않습니다.</div>`;
     if (node.type === 'cron') fields = `${field('크론 표현식', 'expression', c.expression, 'spellcheck="false" maxlength="100"')}${select('시간대', 'timezone', c.timezone, [['Asia/Seoul', 'Asia/Seoul'], ['UTC', 'UTC'], ['Asia/Tokyo', 'Asia/Tokyo']])}<div class="wf-note">예시: <code>0 9 * * 1-5</code><br>매주 월요일부터 금요일, 오전 9시</div>`;
     if (node.type === 'condition') fields = `${field('비교할 값의 경로', 'field', c.field, 'maxlength="200" placeholder="response.body.success"')}${select('조건', 'operator', c.operator, [['equals', '같음'], ['notEquals', '다름'], ['contains', '포함'], ['exists', '값이 있음'], ['isPresent', '필드 존재 (null 포함)'], ['isMissing', '필드 누락'], ['isNull', 'null'], ['gt', '초과'], ['gte', '이상'], ['lt', '미만'], ['lte', '이하']])}${!['exists', 'isPresent', 'isMissing', 'isNull'].includes(c.operator) ? field('비교 값', 'value', c.value, 'maxlength="2000"') : ''}<div class="wf-branch-key"><span><i></i> 일치하는 경우</span><span><i></i> 일치하지 않는 경우</span></div><p class="wf-help">예: event.category, response.status, response.body.success, nodes.노드ID.body 값. 숫자와 true/false는 해당 자료형으로 비교합니다.</p>`;
-    if (node.type === 'http') fields = `${select('메서드', 'method', c.method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map(value => [value, value]))}${field('요청 URL', 'url', c.url, 'type="url" spellcheck="false" maxlength="2000"')}${area('헤더 (JSON)', 'headers', c.headers, 3)}${area('요청 본문', 'body', c.body, 5)}<p class="wf-help">변수 예시: {{event.title}}, {{response.body.id}}, {{secrets.token}}. URL 변수는 인코딩하며 JSON 본문의 문자열은 따옴표를 보존합니다.</p>${field('요청 제한 시간 (ms)', 'timeoutMs', String(c.timeoutMs ?? 10000), 'type="number" min="100" max="30000" step="100"')}${field('통신 오류 재시도 횟수 (같은 요청 반복)', 'retries', String(c.retries ?? 0), 'type="number" min="0" max="3"')}${select('통신 오류가 발생하면', 'onError', c.onError, [['stop', '워크플로우 실패로 종료'], ['continue', '다음 노드로 계속 진행'], ['branch', '오류 연결로 진행']])}<div class="wf-note">HTTP 상태와 응답 본문은 조건 노드에서 판단합니다. 리다이렉트는 따라가지 않으며 응답은 최대 128KB입니다.</div>`;
+    if (node.type === 'http') fields = `${select('메서드', 'method', c.method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map(value => [value, value]))}${field('요청 URL', 'url', c.url, 'type="url" spellcheck="false" maxlength="2000"')}${area('헤더 (JSON)', 'headers', c.headers, 3)}${area('요청 본문', 'body', c.body, 5)}<p class="wf-help">변수 예시: {{event.title}}, {{response.body.id}}, {{context.token}}. URL 변수는 인코딩하며 JSON 본문의 문자열은 따옴표를 보존합니다.</p>${field('요청 제한 시간 (ms)', 'timeoutMs', String(c.timeoutMs ?? 10000), 'type="number" min="100" max="30000" step="100"')}${field('통신 오류 재시도 횟수 (같은 요청 반복)', 'retries', String(c.retries ?? 0), 'type="number" min="0" max="3"')}${select('통신 오류가 발생하면', 'onError', c.onError, [['stop', '워크플로우 실패로 종료'], ['continue', '다음 노드로 계속 진행'], ['branch', '오류 연결로 진행']])}<div class="wf-note">HTTP 상태와 응답 본문은 조건 노드에서 판단합니다. 리다이렉트는 따라가지 않으며 응답은 최대 128KB입니다.</div>`;
     if (node.type === 'service-state') fields = field('서비스 문자열 (비우면 모든 서비스)', 'service', c.service, 'maxlength="100"') + '<p>활성 이벤트 전체를 집계합니다. trigger.service / previous / severity를 사용하세요.</p>';
     if (node.type === 'find') fields = field('배열 경로', 'source', c.source) + field('항목 안의 키 경로', 'field', c.field) + select('비교 대상', 'valueSource', c.valueSource, [['literal', '고정값'], ['path', '값 경로']]) + field('비교 값 또는 경로', 'value', c.value);
     if (node.type === 'datetime') fields = field('시각 경로 또는 now', 'source', c.source) + field('IANA 시간대', 'timezone', c.timezone) + select('출력 형식', 'format', c.format, [['iso','UTC ISO'],['local','현지 ISO (시차 포함)'],['date','날짜'],['time','시각'],['unix-ms','Unix 밀리초']]);
+    if (node.type === 'context') fields = `<p class="wf-help">${c.entries.length}개 키·값을 주입합니다. 노드를 더블 클릭하거나 아래 버튼으로 편집하세요.</p><button class="button secondary" data-wf-command="edit-context">키·값 편집</button><div class="wf-note">이후 노드에서 <code>{{context.token}}</code>처럼 참조합니다. 같은 키는 나중에 주입한 값으로 바뀝니다.</div>`;
     if (node.type === 'condition') fields += select('비교 대상', 'valueSource', c.valueSource || 'literal', [['literal','고정값'],['path','값 경로']]) + area('복합 조건 JSON (입력하면 위 단일 조건 대신 사용)', 'rules', c.rules || '', 6);
     if (node.type === 'http') fields += select('요청 의도', 'intent', c.intent || 'auto', [['auto','메서드 기준'],['read','조회'],['change','변경']]) + select('외부 중복 방지', 'idempotency', c.idempotency || 'none', [['none','검증되지 않음'],['verified','외부 보장 검증 완료']]) + select('응답 기록', 'outputMode', c.outputMode || 'summary', [['summary','가린 요약'],['none','본문 미저장'],['allowlist','허용 필드만']]) + field('기록 허용 경로 (쉼표 구분)', 'outputPaths', c.outputPaths || '');
     if (TRIGGERS.includes(node.type) && node.type !== 'service-state') fields += field('변경 대상 서비스 문자열 (호출 직렬화)', 'executionService', c.executionService || '', 'maxlength="100"');
     if (node.type === 'finish') fields = `${select('워크플로우 결과', 'result', c.result, [['success', '성공'], ['failure', '실패'], ['review', '확인 필요'], ['skipped', '생략']])}${area('종료 사유', 'message', c.message, 3)}`;
-    inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('arrange')} 노드 설정</span><span class="wf-panel-meta">${type.label}</span></div><div class="wf-inspector-body"><div class="wf-inspector-type wf-${type.group}"><span class="wf-type-icon">${svg(type.icon)}</span><div><strong>${type.label}</strong><small>${type.hint}</small></div></div>${field('노드 이름', 'name', node.name, 'maxlength="80"')}<div class="wf-field-divider"></div>${fields}<button class="wf-delete" data-wf-command="delete-node">${svg('trash')} 노드 삭제</button></div>`;
+    inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('arrange')} 노드 설정</span><div class="wf-node-actions"><button type="button" class="wf-icon-button" data-wf-command="duplicate-node" aria-label="노드 복제" title="${current().nodes.length >= LIMITS.nodes ? '최대 100개 노드를 배치할 수 있습니다.' : '노드 복제'}" ${current().nodes.length >= LIMITS.nodes ? 'disabled' : ''}>${svg('copy')} 복제</button><button type="button" class="wf-icon-button wf-node-delete" data-wf-command="delete-node" aria-label="노드 삭제" aria-keyshortcuts="Delete" title="노드 삭제 (Delete)">${svg('trash')} 삭제</button></div></div><div class="wf-inspector-body"><div class="wf-inspector-type wf-${type.group}"><span class="wf-type-icon">${svg(type.icon)}</span><div><strong>${type.label}</strong><small>${type.hint}</small></div></div>${field('노드 이름', 'name', node.name, 'maxlength="80"')}<div class="wf-field-divider"></div>${fields}</div>`;
   }
 
   function refreshSelection() { renderCanvas(); renderInspector(); }
 
+  function selectNode(id) {
+    current().selected = id; selectedEdge = null;
+    // Keep the clicked element mounted so the browser can deliver a double click.
+    for (const element of host.querySelectorAll('.wf-node')) {
+      const selected = element.dataset.nodeId === id;
+      element.classList.toggle('is-selected', selected);
+      element.querySelector('.wf-node-select').setAttribute('aria-pressed', String(selected));
+    }
+    renderEdges(); renderInspector(); renderStatus();
+  }
+
+  function editContext(id) {
+    const node = find(id);
+    if (busy || connecting || node?.type !== 'context') return;
+    selectNode(id);
+    contextEditor.open(node, entries => {
+      node.config.entries = entries;
+      refreshSelection();
+    });
+  }
+
+  function legacySecrets() {
+    const flow = current();
+    if (!flow.secretNames?.length) return '';
+    const removed = JSON.parse(flow.secretEdits);
+    return `<details class="wf-secrets"><summary>기존 비밀 변수 · ${flow.secretNames.length}개</summary><p class="form-hint">기존 변수는 삭제만 가능합니다. 새 값은 컨텍스트 값 주입 노드에서 설정하세요. 삭제는 워크플로우 저장 시 반영됩니다.</p><div class="wf-secret-list">${flow.secretNames.map(name => `<div class="wf-secret-row"><code>${escape(name)}</code><span>${Object.hasOwn(removed, name) ? '삭제 예정' : '값 숨김'}</span><button type="button" class="wf-text-button" data-wf-delete-secret="${escape(name)}" ${Object.hasOwn(removed, name) ? 'disabled' : ''}>삭제</button></div>`).join('')}</div></details>`;
+  }
+
   function addNode(type) {
     if (current().nodes.length >= LIMITS.nodes) { toast('최대 100개 노드를 배치할 수 있습니다.'); return; }
-    const count = current().nodes.length;
-    const node = makeNode(type, `node-${randomUUID()}`, 65 + (count % 2) * 360, count ? Math.max(...current().nodes.map(item => item.y)) + 202 : 36);
+    const position = newNodePosition(current().nodes);
+    const node = makeNode(type, `node-${randomUUID()}`, position.x, position.y);
     current().nodes.push(node); current().selected = node.id; selectedEdge = null; connecting = null;
     refreshSelection();
     revealNode(node);
+  }
+
+  function deleteSelectedNode() {
+    const flow = current();
+    if (busy || drag || !flow || selectedEdge || !find(flow.selected)) return false;
+    const id = flow.selected;
+    flow.nodes = flow.nodes.filter(node => node.id !== id);
+    flow.edges = flow.edges.filter(edge => edge.from !== id && edge.to !== id);
+    flow.selected = null; selectedEdge = null; connecting = null;
+    refreshSelection();
+    query('.wf-stage').focus({ preventScroll: true });
+    return true;
+  }
+
+  function duplicateSelectedNode() {
+    const flow = current(), source = flow && find(flow.selected);
+    if (busy || drag || !source || selectedEdge) return;
+    if (flow.nodes.length >= LIMITS.nodes) { toast('최대 100개 노드를 배치할 수 있습니다.'); return; }
+    const node = structuredClone(source);
+    node.id = `node-${randomUUID()}`;
+    node.name = `${source.name.slice(0, 76)} 복사본`;
+    Object.assign(node, nodePosition(source.x + GRID * 2, source.y + GRID * 2));
+    if (flow.nodes.some(item => item.x === node.x && item.y === node.y)) Object.assign(node, newNodePosition(flow.nodes));
+    flow.nodes.push(node); flow.selected = node.id; selectedEdge = null; connecting = null;
+    refreshSelection(); revealNode(node);
+    query(`[data-wf-select="${node.id}"]`).focus({ preventScroll: true });
   }
 
   function connect(toId) {
@@ -403,16 +482,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function arrange() {
-    const nodes = current().nodes, levels = new Map(nodes.map(node => [node.id, 0]));
-    for (let pass = 0; pass < nodes.length; pass++) {
-      let changed = false;
-      for (const edge of current().edges) if (levels.get(edge.to) <= levels.get(edge.from)) { levels.set(edge.to, levels.get(edge.from) + 1); changed = true; }
-      if (!changed) break;
-    }
-    const rows = new Map();
-    for (const node of nodes) { const level = levels.get(node.id); if (!rows.has(level)) rows.set(level, []); rows.get(level).push(node); }
-    const columns = Math.max(2, ...[...rows.values()].map(row => row.length));
-    for (const [level, row] of rows) row.forEach((node, index) => { node.x = snap(65 + (columns - row.length) * 162 + index * 324); node.y = snap(36 + level * 216); });
+    arrangeNodes(current().nodes, current().edges);
     renderCanvas(); fit();
   }
 
@@ -442,6 +512,12 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     }
     if (target.dataset.wfOpen) { currentId = target.dataset.wfOpen; mountEditor(); return; }
     if (target.dataset.wfAdd) { addNode(target.dataset.wfAdd); return; }
+    if (target.dataset.wfDeleteSecret) {
+      const name = target.dataset.wfDeleteSecret, flow = current();
+      if (!flow.secretNames.includes(name)) return;
+      flow.secretEdits = JSON.stringify({ ...JSON.parse(flow.secretEdits), [name]: null });
+      target.disabled = true; target.previousElementSibling.textContent = '삭제 예정'; updateEditorState(); return;
+    }
     if (target.dataset.wfOutput) {
       const next = { from: target.dataset.wfOutput, port: target.dataset.port };
       connecting = connecting?.from === next.from && connecting.port === next.port ? null : next;
@@ -452,7 +528,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     const nodeId = target.dataset.wfSelect ?? target.dataset.wfInput;
     if (nodeId) {
       if (connecting) connect(nodeId);
-      else { current().selected = nodeId; selectedEdge = null; refreshSelection(); }
+      else selectNode(nodeId);
       return;
     }
     if (target.dataset.wfEdge) { selectedEdge = target.dataset.wfEdge; connecting = null; refreshSelection(); return; }
@@ -468,16 +544,14 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       case 'revert': workflows = workflows.map(flow => flow.id === currentId ? structuredClone(saved.get(flow.id)) : flow); mountEditor(); break;
       case 'reload': if (dirty(current()) && !confirm('저장하지 않은 변경을 버리고 다시 불러오시겠습니까?')) break; perform(async valid => { const flow = await api(`/api/workflows/${currentId}`); if (valid()) { accept(flow); mountEditor(); } }); break;
       case 'run': openRunDialog(); break;
+      case 'dry-run': finishNameEdit(); dryRunUI.open(); break;
       case 'history': openRuns(currentId); break;
       case 'rename': startNameEdit(); break;
+      case 'edit-context': editContext(current().selected); break;
       case 'list': mountList(); break;
       case 'clear-search': search = ''; query('[data-wf-search]').value = ''; renderListRows(); query('[data-wf-search]').focus(); break;
-      case 'delete-node': {
-        const id = current().selected;
-        current().nodes = current().nodes.filter(node => node.id !== id);
-        current().edges = current().edges.filter(edge => edge.from !== id && edge.to !== id);
-        current().selected = null; connecting = null; refreshSelection(); break;
-      }
+      case 'delete-node': deleteSelectedNode(); break;
+      case 'duplicate-node': duplicateSelectedNode(); break;
       case 'delete-edge': current().edges = current().edges.filter(edge => edge.id !== selectedEdge); selectedEdge = null; refreshSelection(); break;
       case 'arrange': arrange(); break;
       case 'fit': fit(); break;
@@ -507,7 +581,6 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function onInput(event) {
     if (busy) return;
-    if (event.target.matches('[data-wf-secrets]')) { current().secretEdits = event.target.value; updateEditorState(); return; }
     if (event.target.matches('[data-wf-search]')) { search = event.target.value; renderListRows(); return; }
     if (event.target.matches('[data-wf-name]')) {
       current().name = event.target.value;
@@ -537,7 +610,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       const rect = stage.getBoundingClientRect();
       if (event.clientX < rect.left || event.clientX >= rect.left + stage.clientWidth || event.clientY < rect.top || event.clientY >= rect.top + stage.clientHeight) return;
       event.preventDefault(); stage.focus({ preventScroll: true });
-      drag = { mode: 'pan', x: event.clientX, y: event.clientY, startX: current().panX ?? 0, startY: current().panY ?? 0, handle: stage, pointerId: event.pointerId, moved: false };
+      drag = { mode: 'pan', x: event.clientX, y: event.clientY, handle: stage, pointerId: event.pointerId, moved: false };
       stage.classList.add('is-panning');
     }
     drag.handle.setPointerCapture(event.pointerId);
@@ -549,12 +622,13 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (!drag.moved && Math.hypot(dx, dy) < 5) return;
     drag.moved = true; event.preventDefault();
     if (drag.mode === 'pan') {
-      current().panX = drag.startX + dx; current().panY = drag.startY + dy;
+      current().panX = (current().panX ?? 0) + dx; current().panY = (current().panY ?? 0) + dy;
+      // Discard movement past the cap so reversing direction responds immediately.
+      drag.x = event.clientX; drag.y = event.clientY;
       sizeCanvas(); return;
     }
     const zoom = current().zoom;
-    drag.node.x = snap(drag.startX + dx / zoom, 16);
-    drag.node.y = snap(drag.startY + dy / zoom, 24);
+    Object.assign(drag.node, nodePosition(drag.startX + dx / zoom, drag.startY + dy / zoom));
     const element = drag.handle.closest('.wf-node');
     element.style.left = `${drag.node.x}px`; element.style.top = `${drag.node.y}px`; element.classList.add('is-dragging');
     renderEdges(); sizeCanvas(); updateEditorState();
@@ -578,6 +652,9 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function mountEditor() {
+    dryRunUI.close();
+    contextEditor.close();
+    fitNodesToCanvas(current().nodes, current().edges);
     mode = 'editor'; request++;
     pendingDelete = null; deleteDialog.close();
     gridObserver?.disconnect();
@@ -585,14 +662,18 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     host = document.querySelector('#main'); connecting = null; selectedEdge = null; drag = null; suppressClick = false;
     host.classList.add('workflow-main');
     host.innerHTML = `<section class="wf-workspace" aria-label="워크플로우 편집">
-      <div class="wf-editor-actions"><button class="wf-back-link" data-wf-command="list">${svg('back')} 워크플로우 목록</button><div><button class="button secondary" data-wf-command="upload">JSON 가져오기</button><button class="button secondary" data-wf-command="download" title="저장된 정의 다운로드">JSON 다운로드</button><button class="button secondary" data-wf-command="history">실행 이력</button><button class="button secondary" data-wf-command="revert">저장된 내용으로 되돌리기</button><button class="button secondary" data-wf-command="reload">다시 불러오기</button><button class="button secondary" data-wf-command="run" title="저장된 구성으로 실제 API 호출">수동 실행</button><button class="button primary" data-wf-command="save">저장</button></div></div><p class="form-error" data-wf-error hidden></p>
-      <details class="wf-secrets"><summary>비밀 변수${current().secretNames?.length ? ` · ${current().secretNames.join(', ')}` : ''}</summary><p class="form-hint">JSON 객체로 입력하면 암호화하여 저장합니다. 사용 예: {{secrets.token}}. 기존 값은 표시하지 않습니다. 삭제하려면 해당 값을 null로 입력하세요.</p><textarea data-wf-secrets rows="3" aria-label="비밀 변수 JSON" placeholder='{"token":"새 값"}'>${escape(current().secretEdits)}</textarea></details><div class="wf-editor">
-      <div class="wf-canvas-bar" title="빈 배경을 끌어 화면 이동 · 마우스 휠로 확대·축소 · 노드를 끌어 이동 · 아래 연결점을 눌러 연결 · 연결선을 눌러 편집"><div class="wf-heading-title"><h1><button class="wf-title-button" data-wf-command="rename" title="워크플로우 이름 편집"><span data-wf-editor-title>${escape(current().name || '이름 없는 워크플로우')}</span>${svg('edit')}</button><input class="wf-title-input" data-wf-name value="${escape(current().name)}" maxlength="80" aria-label="워크플로우 이름" hidden></h1><span class="wf-save-state" data-wf-save-state></span></div><button class="wf-icon-button" data-wf-command="arrange" title="노드 자동 정렬" aria-label="노드 자동 정렬">${svg('arrange')}</button></div>
+      <p class="form-error" data-wf-error hidden></p>
+      ${legacySecrets()}<div class="wf-editor">
+      <div class="wf-canvas-bar" title="빈 배경을 끌어 화면 이동 · 마우스 휠로 확대·축소 · 노드를 끌어 이동 · 아래 연결점을 눌러 연결 · 연결선을 눌러 편집"><div class="wf-heading-title"><button type="button" class="wf-icon-button" data-wf-command="list" title="워크플로우 목록" aria-label="워크플로우 목록">${svg('back')}</button><div class="wf-heading-copy"><h1><button class="wf-title-button" data-wf-command="rename" title="워크플로우 이름 편집"><span data-wf-editor-title>${escape(current().name || '이름 없는 워크플로우')}</span>${svg('edit')}</button><input class="wf-title-input" data-wf-name value="${escape(current().name)}" maxlength="80" aria-label="워크플로우 이름" hidden></h1><span class="wf-save-state" data-wf-save-state></span></div></div>${editorToolbar()}</div>
       <aside class="wf-palette" aria-label="노드 목록"><div class="wf-library">${[['trigger', '시작 이벤트'], ['condition', '흐름 제어'], ['action', '액션']].map(([group, label]) => `<section class="wf-node-group"><h2>${label}</h2>${Object.entries(TYPES).filter(([, type]) => type.group === group).map(([id, type]) => `<button class="wf-library-item wf-${group}" data-wf-add="${id}"><span class="wf-type-icon">${svg(type.icon)}</span><span><strong>${type.label}</strong><small>${type.hint}</small></span>${svg('plus')}</button>`).join('')}</section>`).join('')}</div></aside>
-      <div class="wf-canvas"><div class="wf-stage" tabindex="0" aria-label="노드 캔버스"><div class="wf-world-wrap"><div class="wf-world"><svg class="wf-edges" aria-label="노드 연결"></svg><div class="wf-nodes"></div></div></div><div class="wf-canvas-empty" hidden>${svg('arrange')}<h3>첫 번째 노드를 추가해 보세요</h3><p>시작 이벤트를 고르고, 필요한 동작을 연결하세요.</p><button class="button secondary" data-wf-add="start">${svg('plus')} 이벤트 시작 추가</button></div></div><div class="wf-canvas-footer"><span class="wf-count"></span><div class="wf-zoom"><button class="wf-icon-button" data-wf-command="zoom-out" aria-label="축소">${svg('minus')}</button><span data-wf-zoom-label></span><button class="wf-icon-button" data-wf-command="zoom-in" aria-label="확대">${svg('plus')}</button><span class="wf-zoom-divider"></span><button class="wf-icon-button" data-wf-command="fit" aria-label="화면에 맞추기" title="화면에 맞추기">${svg('fit')}</button></div></div></div>
+      <div class="wf-canvas"><div class="wf-stage" tabindex="0" aria-label="노드 캔버스"><div class="wf-world-wrap"><div class="wf-world"><svg class="wf-boundary" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" aria-hidden="true"><rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}"/><text x="18" y="20">(0, 0)</text><text x="${CANVAS_SIZE - 18}" y="${CANVAS_SIZE - 18}" text-anchor="end">(${CANVAS_SIZE}, ${CANVAS_SIZE})</text></svg><svg class="wf-edges" aria-label="노드 연결"></svg><div class="wf-nodes"></div></div></div><div class="wf-canvas-empty" hidden>${svg('arrange')}<h3>첫 번째 노드를 추가해 보세요</h3><p>시작 이벤트를 고르고, 필요한 동작을 연결하세요.</p><button class="button secondary" data-wf-add="start">${svg('plus')} 이벤트 시작 추가</button></div></div><div class="wf-canvas-footer"><span class="wf-count"></span><div class="wf-zoom"><button class="wf-icon-button" data-wf-command="zoom-out" aria-label="축소">${svg('minus')}</button><span data-wf-zoom-label></span><button class="wf-icon-button" data-wf-command="zoom-in" aria-label="확대">${svg('plus')}</button><span class="wf-zoom-divider"></span><button class="wf-icon-button" data-wf-command="fit" aria-label="화면에 맞추기" title="화면에 맞추기">${svg('fit')}</button></div></div></div>
       <aside class="wf-inspector" aria-label="노드 설정"></aside><div class="wf-editor-footer"><span class="wf-canvas-help" role="status"></span></div></div></section>`;
     const settings = { signal: controller.signal };
     host.addEventListener('click', onClick, settings);
+    host.addEventListener('dblclick', event => {
+      const handle = event.target.closest('[data-wf-select]');
+      if (handle) editContext(handle.dataset.wfSelect);
+    }, settings);
     host.addEventListener('input', onInput, settings);
     host.addEventListener('change', event => {
       if (['operator', 'onError'].includes(event.target.dataset.wfField)) {
@@ -606,6 +687,15 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       if (!drag && node) revealNode(find(node.dataset.nodeId));
     }, settings);
     host.addEventListener('keydown', event => {
+      if (event.key === 'Delete') {
+        if (event.defaultPrevented || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || !authenticated() || !active() || document.querySelector('dialog[open]')) return;
+        if (event.target.isContentEditable || event.target.closest('input, textarea, select, [role="textbox"]')) return;
+        if (deleteSelectedNode()) event.preventDefault();
+        return;
+      }
+      if (event.key === 'Enter' && event.target.matches('[data-wf-select]') && find(event.target.dataset.wfSelect)?.type === 'context') {
+        event.preventDefault(); editContext(event.target.dataset.wfSelect); return;
+      }
       if (event.target.matches('[data-wf-name]') && !event.isComposing && ['Enter', 'Escape'].includes(event.key)) {
         event.preventDefault(); finishNameEdit(event.key === 'Escape'); query('[data-wf-command="rename"]').focus(); return;
       }
@@ -627,7 +717,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     renderCanvas(); renderInspector();
     const stage = query('.wf-stage');
     stage.addEventListener('wheel', onWheel, { ...settings, passive: false });
-    gridObserver = new ResizeObserver(syncGrid);
+    gridObserver = new ResizeObserver(sizeCanvas);
     gridObserver.observe(stage);
     if (stage.clientWidth < 500) {
       current().zoom = .85;
@@ -644,5 +734,5 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (context.outerHTML !== markup) context.outerHTML = markup;
   }
 
-  return { mount() { if (mode === 'editor' && current()) mountEditor(); else mountList(); }, refresh, refreshDate, clear() { files.close(); pendingDelete = null; deleteDialog.close(); gridObserver?.disconnect(); controller?.abort(); controller = null; host = null; request++; runDialog.close(); runDialog.replaceChildren(); saved.clear(); workflows = []; currentId = null; createKey = null; loaded = false; busy = false; mode = 'list'; search = ''; connecting = null; selectedEdge = null; drag = null; } };
+  return { mount() { if (mode === 'editor' && current()) mountEditor(); else mountList(); }, refresh, refreshDate, clear() { dryRunUI.close(); contextEditor.close(); files.close(); pendingDelete = null; deleteDialog.close(); gridObserver?.disconnect(); controller?.abort(); controller = null; host = null; request++; runDialog.close(); runDialog.replaceChildren(); saved.clear(); workflows = []; currentId = null; createKey = null; loaded = false; busy = false; mode = 'list'; search = ''; connecting = null; selectedEdge = null; drag = null; } };
 }

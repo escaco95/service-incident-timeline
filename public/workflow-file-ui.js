@@ -43,7 +43,7 @@ export function createWorkflowFiles({ api, escape, generation, active, current, 
     if (session !== generation() || !active()) return;
     const url = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2) + '\n'], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = `workflow-${flow.id}.json`; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast('저장된 정의를 다운로드했습니다. 비밀 값은 포함되지 않습니다.');
+    toast('저장된 정의를 다운로드했습니다. 컨텍스트 주입 값이 포함됩니다.');
   }
   async function services() {
     const session = generation(), data = await api('/api/workflow-services');

@@ -25,7 +25,8 @@ async function seed(f) {
   const event = (await f.app.vault.add({ title: '초기화할 이벤트', description: '', category: 'maintenance', services: [], start: new Date().toISOString(), end: null })).event;
   await f.app.vault.saveServices({ version: 1, services: [{ id: 'service', name: '보존 서비스', active: true }] });
   let flow = await f.app.workflows.create({ name: '초기화할 흐름', requestId: randomUUID(), nodes: [{ id: 'cron', type: 'cron', name: '예약', x: 36, y: 36, config: { expression: '* * * * *', timezone: 'UTC' } }], edges: [] });
-  flow = await f.app.workflows.save(flow.id, { ...flow, secrets: { ACCESS: 'stored-private-value' } });
+  await f.app.vault.mutate(state => { state.workflows.find(item => item.id === flow.id).secrets = { ACCESS: 'stored-private-value' }; }, { scope: {} });
+  flow = f.app.workflows.read(flow.id);
   const run = await f.app.workflows.run(flow.id, { version: flow.version, requestId: randomUUID() });
   return { event, flow, run };
 }
