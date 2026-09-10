@@ -34,6 +34,8 @@ const ASSETS = new Map([
   ['/workflow-ui.js', ['workflow-ui.js', 'text/javascript; charset=utf-8']],
   ['/workflow-layout.js', ['workflow-layout.js', 'text/javascript; charset=utf-8']],
   ['/workflow-context-ui.js', ['workflow-context-ui.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-switch-ui.js', ['workflow-switch-ui.js', 'text/javascript; charset=utf-8']],
+  ['/workflow-diagnostics-ui.js', ['workflow-diagnostics-ui.js', 'text/javascript; charset=utf-8']],
   ['/workflow-dry-run-ui.js', ['workflow-dry-run-ui.js', 'text/javascript; charset=utf-8']],
   ['/workflow-dry-run-spec.js', ['workflow-dry-run-spec.js', 'text/javascript; charset=utf-8']],
   ['/workflow-dry-run-events.js', ['workflow-dry-run-events.js', 'text/javascript; charset=utf-8']],
@@ -300,9 +302,10 @@ export async function createApp(options = {}) {
         if (req.method === 'GET') return send(res, 200, { ...workflows.list(), engine: workflowEngine.status() });
         if (req.method === 'POST') return send(res, 201, await workflows.create(await json(req, LIMITS.bytes + 256 * 1024)));
       }
-      const workflow = /^\/api\/workflows\/([0-9a-f-]{36})(?:\/(enabled|run|export|dry-run|dry-run-setup|dry-run-service-event))?$/.exec(pathname);
+      const workflow = /^\/api\/workflows\/([0-9a-f-]{36})(?:\/(enabled|run|export|dry-run|dry-run-setup|dry-run-service-event|diagnostics))?$/.exec(pathname);
       if (workflow) {
         const id = workflow[1], action = workflow[2];
+        if (action === 'diagnostics' && req.method === 'POST') return send(res, 200, workflows.diagnose(id, await json(req, LIMITS.bytes + 256 * 1024)));
         if (action === 'dry-run-service-event' && req.method === 'POST') return send(res, 200, await workflows.dryRunServiceEvent(id, await json(req, 4096)));
         if (action === 'dry-run-setup' && req.method === 'GET') return send(res, 200, workflows.readDryRunSetup(id));
         if (action === 'dry-run-setup' && req.method === 'PUT') return send(res, 200, await workflows.saveDryRunSetup(id, await json(req, DRY_RUN_LIMITS.bytes + 1024)));

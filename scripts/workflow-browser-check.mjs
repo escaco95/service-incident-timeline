@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { createApp } from '../server.mjs';
 import { fileURLToPath } from 'node:url';
 import { CANVAS_SIZE, NODE_BOUNDS } from '../public/workflow-layout.js';
+import { checkDiagnostics } from './workflow-diagnostics-browser.mjs';
+import { checkSwitch } from './workflow-switch-browser.mjs';
 const tempRoot = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), '.tmp');
 await fs.mkdir(tempRoot, {recursive:true});
 const runDir = await fs.mkdtemp(path.join(tempRoot, 'workflow-browser-'));
@@ -16,9 +18,12 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let socket, id = 0, tracking = false;
 const pending = new Map(), requests = [], errors = [];
 async function until(check) { for(let i=0;i<100;i++) { if(await check()) return; await delay(100); } throw new Error('Browser wait timed out'); }
-function command(method, params = {}) { const requestId=++id; return new Promise((resolve,reject) => { const timeout=setTimeout(()=>{pending.delete(requestId);reject(new Error(method+' timeout'));},10000); pending.set(requestId,{resolve:result=>{clearTimeout(timeout);resolve(result);},reject:error=>{clearTimeout(timeout);reject(error);}}); socket.send(JSON.stringify({id:requestId,method,params})); }); }
+function command(method, params = {}) { const requestId=++id; return new Promise((resolve,reject) => { const timeout=setTimeout(()=>{pending.delete(requestId);reject(new Error(method+' timeout'));},10000); pending.set(requestId,{resolve:result=>{clearTimeout(timeout);resolve(result);},reject:error=>{clearTimeout(timeout);reject(new Error(method+" "+JSON.stringify(params)+": "+error.message));}}); socket.send(JSON.stringify({id:requestId,method,params})); }); }
 async function evaluate(expression) { const result=await command('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true,userGesture:true}); if(result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text); return result.result.value; }
-async function click(selector) { await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`); }
+async function click(selector) {
+ if (selector === '[data-wf-command="run"]') await until(() => evaluate('!document.querySelector("[data-wf-command=run]").disabled'));
+ await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+}
 async function deleteFlow(selector) { await click(selector); await click('[data-wf-confirm-delete]'); }
 async function input(selector,value) { await evaluate(`(()=>{const field=document.querySelector(${JSON.stringify(selector)});field.value=${JSON.stringify(value)};field.dispatchEvent(new Event('input',{bubbles:true}));field.dispatchEvent(new Event('change',{bubbles:true}));})()`); }
 async function deleteKey() {
@@ -34,8 +39,9 @@ async function checkNodeActions() {
  const originalFields=await configFields();
  for(const width of [1440,1100,900,390]) {
   await viewport(width,width===390?844:1000);
+  if(await evaluate('document.querySelector(".wf-inspector").hidden')) await click('[data-wf-dock="inspector"]');
   const layout=await evaluate(`(()=>{const header=document.querySelector('.wf-inspector>.wf-panel-title'),r=header.getBoundingClientRect(),label=header.firstElementChild.getBoundingClientRect();return {width:innerWidth,page:document.documentElement.scrollWidth,header:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},labelRight:label.right,buttons:[...header.querySelectorAll('button')].map(button=>{const b=button.getBoundingClientRect();return {left:b.left,right:b.right,top:b.top,bottom:b.bottom};}),bottomDelete:!!document.querySelector('.wf-inspector-body [data-wf-command="delete-node"]')};})()`);
-  assert.equal(layout.buttons.length,2);assert.equal(layout.bottomDelete,false);assert.ok(layout.page<=width+1);
+  assert.equal(layout.buttons.length,3);assert.equal(layout.bottomDelete,false);assert.ok(layout.page<=width+1);
   for(const button of layout.buttons) assert.ok(button.left>=layout.labelRight&&button.right<=layout.header.right&&button.top>=layout.header.top&&button.bottom<=layout.header.bottom,JSON.stringify(layout));
  }
  await viewport(1440);
@@ -85,6 +91,69 @@ async function checkNodeActions() {
 }
 async function screen(name) { const result=await command('Page.captureScreenshot',{format:'png'}); await fs.writeFile(path.join(tempRoot,name+'.png'),Buffer.from(result.data,'base64')); }
 async function viewport(width,height=1000) { await command('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false}); await delay(200); }
+async function pointerClick(selector) {
+ const point=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)}),r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;if(!e.contains(document.elementFromPoint(x,y)))throw Error('Control is obscured: '+${JSON.stringify(selector)});return {x,y};})()`);
+ await command('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',buttons:1,clickCount:1});
+ await command('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',buttons:0,clickCount:1});
+}
+async function checkDockLayout() {
+ await click('[data-wf-select="http"]');
+ const savedState=await evaluate('document.querySelector("[data-wf-save-state]").textContent');
+ const stageBounds=()=>evaluate('(()=>{const r=document.querySelector(".wf-stage").getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom};})()');
+ const closeDock=async name=>{if(!await evaluate(`document.querySelector('.wf-${name}').hidden`))await pointerClick(`[data-wf-close-dock="${name}"]`);};
+ for(const [width,height] of [[1440,900],[1100,768],[900,900],[390,844],[360,640],[667,375],[1280,480]]) {
+  await viewport(width,height);await closeDock('palette');await closeDock('inspector');
+  const bounds=await stageBounds();
+  const header=await evaluate('(()=>{const r=document.querySelector(".header").getBoundingClientRect();return {top:r.top,bottom:r.bottom};})()');
+  assert.equal(header.top,0);assert.equal(bounds.top,header.bottom);
+  assert.equal(bounds.left,0);assert.equal(bounds.right,width);assert.equal(bounds.bottom,height);
+  assert.equal(await evaluate('document.querySelector(".app-content").scrollHeight===document.querySelector(".app-content").clientHeight'),true);
+  const toolbar=await evaluate('(()=>{const p=document.querySelector(".wf-canvas-bar").getBoundingClientRect();return [...document.querySelectorAll(".wf-toolbar button")].every(b=>{const r=b.getBoundingClientRect();return r.left>=p.left&&r.right<=p.right&&r.top>=p.top&&r.bottom<=p.bottom&&b.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));});})()');
+  assert.equal(toolbar,true,'all toolbar controls stay visible at '+width);
+  for(const name of ['palette','inspector']) {
+   await pointerClick(`[data-wf-dock="${name}"]`);
+   assert.equal(await evaluate(`document.querySelector('[data-wf-dock="${name}"]').getAttribute('aria-expanded')`),'true');
+   assert.deepEqual(await stageBounds(),bounds,'opening docks must not shrink the canvas');
+   const panel=await evaluate(`(()=>{const r=document.querySelector('.wf-${name}').getBoundingClientRect(),b=document.querySelector('.wf-canvas-bar').getBoundingClientRect(),f=document.querySelector('.wf-canvas-footer').getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,barBottom:b.bottom,footerTop:f.top};})()`);
+   assert.ok(panel.left>=0&&panel.right<=width&&panel.top>=panel.barBottom&&panel.bottom<=panel.footerTop,JSON.stringify({width,height,name,panel}));
+   const selector=name==='palette'?'.wf-library':'.wf-inspector-body';
+   const scroll=await evaluate(`(()=>{const e=document.querySelector('${selector}');e.scrollTop=0;const r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+Math.min(40,r.height/2),range:e.scrollHeight-e.clientHeight,world:document.querySelector('.wf-world').style.transform};})()`);
+   // Complete a mouse scroll gesture before moving to another dock or resizing.
+   // Consecutive bare wheel events can stay latched to the previous scroll area.
+   await command('Input.synthesizeScrollGesture',{x:scroll.x,y:scroll.y,yDistance:-240,gestureSourceType:'mouse',speed:1200});
+   if(scroll.range>0)assert.ok(await evaluate(`document.querySelector('${selector}').scrollTop>0`),'dock scrolls independently: '+JSON.stringify({width,height,name,scroll}));
+   assert.equal(await evaluate('document.querySelector(".wf-world").style.transform'),scroll.world,'dock wheel must not zoom the diagram');
+   assert.equal(await evaluate('document.querySelector(".app-content").scrollTop'),0);
+   if(width===390)await screen('workflow-dock-'+name+'-mobile');
+   if(name==='palette') {
+    await evaluate('document.querySelector(".wf-library").scrollTop=10000');
+    assert.equal(await evaluate('(()=>{const e=document.querySelector("[data-wf-add=finish]"),r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));})()'),true,'last palette item is reachable');
+   }
+   await closeDock(name);
+   assert.equal(await evaluate('document.activeElement.dataset.wfDock'),name);
+  }
+  if(width<=1000) {
+   await pointerClick('[data-wf-dock="palette"]');await pointerClick('[data-wf-dock="inspector"]');
+   assert.equal(await evaluate('document.querySelector(".wf-palette").hidden'),true,'compact docks open one at a time');
+   await closeDock('inspector');
+  }
+  await pointerClick('[data-wf-command="fit"]');await checkGrid('floating docks '+width);
+  if(width===390)await screen('workflow-docks-mobile');
+  assert.equal(await evaluate('document.querySelector("[data-wf-save-state]").textContent'),savedState,'dock and camera changes do not edit the workflow');
+ }
+ await viewport(1440,900);
+ for(const name of ['palette','inspector']) if(await evaluate(`document.querySelector('.wf-${name}').hidden`))await pointerClick(`[data-wf-dock="${name}"]`);
+ await evaluate('document.querySelector(".wf-inspector-body").scrollTop=0;document.querySelector(".wf-library").scrollTop=0');
+ await pointerClick('[data-wf-command="fit"]');await screen('workflow-docks-desktop');
+ await evaluate('document.documentElement.dataset.theme="dark"');await screen('workflow-docks-dark');
+ await evaluate('document.documentElement.dataset.theme="light"');
+ await pointerClick('[data-wf-command="list"]');
+ assert.equal(await evaluate('document.querySelector("#main").classList.contains("workflow-main")'),false);
+ await pointerClick('[data-view="calendar"]');await until(()=>evaluate('!!document.querySelector(".calendar")'));
+ assert.equal(await evaluate('document.querySelector(".header").getBoundingClientRect().bottom'),64);
+ await pointerClick('[data-view="workflow"]');await until(()=>evaluate('!!document.querySelector("[data-wf-open]")'));
+ await click('[data-wf-open]');await viewport(1440);
+}
 async function checkCamera(label, expected) {
  const camera=await evaluate(`(()=>{const s=document.querySelector('.wf-stage'),m=new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform);return {x:(s.clientWidth/2-m.e)/m.a,y:(s.clientHeight/2-m.f)/m.a};})()`);
  assert.ok(camera.x>=-.02&&camera.x<=CANVAS_SIZE+.02&&camera.y>=-.02&&camera.y<=CANVAS_SIZE+.02,label+JSON.stringify(camera));
@@ -126,12 +195,13 @@ async function panCanvas(dx,dy,reverse) {
 }
 async function wheelZoom(delta,bounded=false) {
  const before=await evaluate(`(()=>{const s=document.querySelector('.wf-stage').getBoundingClientRect(),r=document.querySelector('.wf-world').getBoundingClientRect(),m=new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform),x=Math.round(s.left+s.width*.61),y=Math.round(s.top+s.height*.42);return {x,y,worldX:(x-r.left)/m.a,worldY:(y-r.top)/m.a,zoom:m.a,pageY:scrollY};})()`);
+ const expected=Math.max(.35,Math.min(1.5,before.zoom*Math.exp(-Math.max(-240,Math.min(240,delta))*.002)));
+ await command('Input.dispatchMouseEvent',{type:'mouseMoved',x:before.x,y:before.y});
  await command('Input.dispatchMouseEvent',{type:'mouseWheel',x:before.x,y:before.y,deltaX:0,deltaY:delta});
- await delay(50);
+ await until(()=>evaluate(`Math.abs(new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform).a-${expected})<.00001`));
  const after=await evaluate(`(()=>{const r=document.querySelector('.wf-world').getBoundingClientRect(),m=new DOMMatrix(getComputedStyle(document.querySelector('.wf-world')).transform);return {worldX:(${before.x}-r.left)/m.a,worldY:(${before.y}-r.top)/m.a,zoom:m.a,pageY:scrollY};})()`);
  if(!bounded) assert.ok(Math.abs(before.worldX-after.worldX)<.02&&Math.abs(before.worldY-after.worldY)<.02,JSON.stringify({before,after}));
  assert.equal(after.pageY,before.pageY);
- const expected=Math.max(.35,Math.min(1.5,before.zoom*Math.exp(-Math.max(-240,Math.min(240,delta))*.002)));
  assert.ok(Math.abs(after.zoom-expected)<.00001,JSON.stringify({after,expected}));
  await checkGrid('wheel zoom');
 }
@@ -204,7 +274,8 @@ try {
  await app.vault.mutate(state=>{state.workflows.find(item=>item.id===flow.id).secrets={ACCESS:'browser-private-secret'};},{scope:{}});
  saved=await app.workflows.save(flow.id,{...saved,nodes:[node('trigger','start',{service:''}),node('http','http',{method:'POST',url:'http://127.0.0.1:1',headers:'{"Authorization":"Bearer {{secrets.ACCESS}}"}',body:'{"title":"{{event.title}}"}',onError:'stop',timeoutMs:1000,retries:0},252),node('condition','condition',{field:'response.status',operator:'gte',value:'400'},468),node('success','finish',{result:'success',message:'완료'},684,72),node('failure','finish',{result:'failure',message:'거부'},684,396)],edges:[edge('trigger','http'),edge('http','condition'),edge('condition','success','true'),edge('condition','failure','false')]});
  await click('[data-wf-open]');await click('[data-wf-command="reload"]');await until(()=>evaluate('document.querySelectorAll(".wf-node").length===5'));
- await checkNodeActions();
+ await checkDiagnostics({evaluate,click,input,until,command,viewport,screen});
+ await checkDockLayout();await checkNodeActions();
  await checkGrid('loaded');await checkCameraControls();await panCanvas(40,30);await wheelZoom(-100);await dragGridNode(45,35);await click('[data-wf-command="arrange"]');await checkGrid('arrange');
  for(const [dx,dy] of [[20000,20000],[-20000,-20000],[20000,-20000],[-20000,20000]]) {await dragGridNode(dx,dy);await click('[data-wf-command="arrange"]');}
  assert.equal(await evaluate('document.querySelector("[data-wf-command=run]").disabled'),true);
@@ -214,6 +285,7 @@ try {
  for(const width of [1440,900,390]) {await viewport(width,width===390?844:1000);await click('[data-wf-command="fit"]');const layout=await evaluate('({width:innerWidth,page:document.documentElement.scrollWidth,save:!!document.querySelector("[data-wf-command=save]"),main:document.querySelector("#main").getBoundingClientRect().width})');assert.ok(layout.page<=layout.width+1,JSON.stringify(layout));layouts.push(layout);await checkGrid('width '+width);}
  await screen('workflow-real-mobile');await viewport(1440);
  await click('[data-wf-command="rename"]');await input('[data-wf-name]','저장하지 않을 이름');await click('[data-wf-command="revert"]');assert.equal(await evaluate('document.querySelector("[data-wf-editor-title]").textContent'),saved.name);
+ await until(()=>evaluate('!document.querySelector("[data-wf-command=run]").disabled'));
  await click('[data-wf-command="run"]');await until(()=>evaluate('document.querySelector("#workflow-run-dialog")?.open'));
  await input('#workflow-run-dialog [name=eventId]',event.id);await evaluate('document.querySelector("[data-wf-run-form]").requestSubmit()');
  await until(()=>evaluate('!!document.querySelector("#audit-detail-dialog .audit-result.success")'));
@@ -237,6 +309,7 @@ try {
    await until(() => evaluate('!document.querySelector("#workflow-file-dialog [type=submit]").disabled'));
  }
  await uploadFile(path.resolve('examples/workflows/service-state-http.json'));
+ assert.equal(await evaluate('document.querySelector("[data-file-summary]").textContent.includes("비밀 변수")'),false);
  assert.equal(app.workflows.list().workflows.length,0);
  await evaluate('document.querySelector("#workflow-file-dialog form").requestSubmit()');
  await until(() => evaluate('document.querySelectorAll(".wf-node").length===15'));
@@ -249,6 +322,7 @@ try {
  const downloaded = path.join(runDir,'workflow-'+imported.id+'.json');
  await until(async () => {try {await fs.access(downloaded);return true;}catch{return false;}});
  assert.equal(JSON.parse(await fs.readFile(downloaded,'utf8')).definition.nodes.length,15);
+ assert.equal(Object.hasOwn(JSON.parse(await fs.readFile(downloaded,'utf8')),'requiredSecrets'),false);
  const largeNodes = [node('root','cron',{expression:'* * * * *',timezone:'UTC'}), ...Array.from({length:98},(_,i)=>node('date'+i,'datetime',{source:'now',timezone:'UTC',format:'iso'})), node('done','finish',{result:'success',message:''})];
  const large = {format:'service-incident-timeline/workflow',formatVersion:1,requiredSecrets:[],definition:{name:'100 node browser fixture',nodes:largeNodes.map(({x,y,...rest})=>rest),edges:largeNodes.slice(1).map((node,i)=>edge(largeNodes[i].id,node.id))}};
  const largeFile=path.join(runDir,'100-nodes.json');await fs.writeFile(largeFile,JSON.stringify(large));
@@ -482,6 +556,61 @@ try {
  for(const key of ['events','changes','workflowRuns','serviceState']) assert.deepEqual(afterService[key],beforeService[key]);
  assert.equal(calls.length,callsBeforeDry);
  }
+ // The datetime formatter is authored, exchanged and evaluated through the real UI.
+ const callsBeforeDate=calls.length;
+ await viewport(1440);await click('[data-wf-command="list"]');await click('[data-wf-command="upload"]');
+ await uploadFile(path.resolve('examples/workflows/datetime-format-http.json'));
+ await evaluate('document.querySelector("#workflow-file-dialog form").requestSubmit()');
+ await until(()=>evaluate('document.querySelectorAll(".wf-node").length===4'));
+ const dateFlow=app.workflows.list().workflows.find(item=>item.name==='날짜 형식 지정 예제');assert.ok(dateFlow);
+ if(await evaluate('document.querySelector("[data-wf-dock=inspector]")?.getAttribute("aria-expanded")==="false"')) await click('[data-wf-dock="inspector"]');
+ await click('[data-wf-select="clock"]');
+ assert.equal(await evaluate('document.querySelector("[data-wf-field=pattern]").value'),'yyyy/MM/dd HH:mm:ss');
+ assert.equal(await evaluate('document.querySelector("[data-wf-field=pattern]").maxLength'),128);
+ await input('[data-wf-field="format"]','iso');assert.equal(await evaluate('!!document.querySelector("[data-wf-field=pattern]")'),false);
+ await input('[data-wf-field="format"]','custom');assert.equal(await evaluate('document.querySelector("[data-wf-field=pattern]").value'),'yyyy/MM/dd HH:mm:ss');
+ await input('[data-wf-field="pattern"]','yyyyMMdd-HHmmss');await click('[data-wf-command="save"]');
+ await until(()=>app.workflows.read(dateFlow.id).nodes.find(node=>node.id==='clock').config.pattern==='yyyyMMdd-HHmmss');
+ await until(()=>evaluate('document.querySelector("[data-wf-command=save]").disabled'));
+ await click('[data-wf-command="reload"]');await until(()=>evaluate('document.querySelector("[data-wf-command=save]").disabled'));
+ await click('[data-wf-select="clock"]');assert.equal(await evaluate('document.querySelector("[data-wf-field=pattern]").value'),'yyyyMMdd-HHmmss');
+ await screen('workflow-datetime-desktop');await viewport(390,844);
+ if(await evaluate('document.querySelector("[data-wf-dock=inspector]")?.getAttribute("aria-expanded")==="false"')) await click('[data-wf-dock="inspector"]');
+ await evaluate('document.querySelector(".wf-inspector").scrollIntoView({block:"start",behavior:"instant"})');
+ assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'),true);await screen('workflow-datetime-mobile');
+ await viewport(1440);await click('[data-wf-command="download"]');
+ const dateDownload=path.join(runDir,'workflow-'+dateFlow.id+'.json');
+ await until(async()=>{try{await fs.access(dateDownload);return true;}catch{return false;}});
+ assert.equal(JSON.parse(await fs.readFile(dateDownload,'utf8')).definition.nodes.find(node=>node.id==='clock').config.pattern,'yyyyMMdd-HHmmss');
+ await click('[data-wf-command="dry-run"]');await until(()=>evaluate('!!document.querySelector("[data-dry-form]")'));
+ await input('[data-dry-field="now"]','2031-04-03T07:08:09Z');
+ await evaluate('document.querySelector("[data-dry-form]").requestSubmit()');await until(()=>evaluate('document.querySelector("[data-dry-result]")?.hidden===false'));
+ assert.equal(await evaluate('document.querySelector("[data-dry-result]").textContent.includes("20310403-070809")'),true);
+ assert.equal(await evaluate('document.querySelector("[data-dry-result]").textContent.includes("+00:00")'),true);
+ await click('[data-dry-close]');await until(()=>evaluate('!document.querySelector("#workflow-dry-run-dialog").open'));
+ await input('[data-wf-field="pattern"]','YYYY');await click('[data-wf-command="dry-run"]');await until(()=>evaluate('!!document.querySelector("[data-dry-form]")'));
+ await evaluate('document.querySelector("[data-dry-form]").requestSubmit()');await until(()=>evaluate('document.querySelector("[data-dry-error]")?.hidden===false'));
+ assert.equal(await evaluate('document.querySelector("[data-dry-error]").textContent.includes("토큰")'),true);
+ await click('[data-dry-close]');await until(()=>evaluate('!document.querySelector("#workflow-dry-run-dialog").open'));
+ // Show both invalid fields on the datetime node, then clear each diagnosis as it is corrected.
+ await input('[data-wf-field="timezone"]','Invalid/Zone');
+ const dateDiagnostics=count=>until(()=>evaluate(`document.querySelector('[data-wf-diagnostics-status]').textContent!=='진단 중…' && document.querySelectorAll('[data-wf-diagnostic-node="clock"]').length===${count}`));
+ await dateDiagnostics(2);
+ assert.deepEqual(await evaluate('[...document.querySelectorAll(".wf-node.has-error")].map(node=>node.dataset.nodeId)'),['clock']);
+ const dateDescription=await evaluate('document.querySelector("[data-wf-select=clock]").getAttribute("aria-description")');
+ assert.match(dateDescription,/IANA/);assert.match(dateDescription,/토큰/);
+ assert.equal(await evaluate('document.querySelector("[data-wf-command=run]").disabled'),true);
+ assert.equal(await evaluate('document.querySelector("[data-wf-command=save]").disabled'),false);
+ await click('[data-wf-diagnostic-node="clock"]');
+ assert.equal(await evaluate('document.querySelector(".wf-node.is-selected").dataset.nodeId'),'clock');
+ await screen('workflow-datetime-diagnostics');
+ await input('[data-wf-field="pattern"]','yyyyMMdd-HHmmss');await dateDiagnostics(1);
+ assert.match(await evaluate('document.querySelector("[data-wf-diagnostic-node=clock]").textContent'),/IANA/);
+ await input('[data-wf-field="timezone"]','UTC');await dateDiagnostics(0);
+ assert.equal(await evaluate('document.querySelector(".wf-diagnostics").hidden'),true);
+ assert.equal(await evaluate('document.querySelector(".wf-node.has-error")===null'),true);
+ await click('[data-wf-command="revert"]');assert.equal(calls.length,callsBeforeDate);
+ await checkSwitch({app,calls,runDir,evaluate,click,input,until,command,viewport,screen,uploadFile});
  assert.deepEqual(errors,[]);console.log(JSON.stringify({result:'passed',calls:calls.length,layouts,errors}));
 } catch(error) {console.log(JSON.stringify({errors,screen:await evaluate('document.body.innerText')}));await screen('workflow-real-error');throw error;}
 finally {

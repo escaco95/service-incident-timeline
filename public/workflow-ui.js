@@ -1,9 +1,11 @@
 import { randomUUID } from './random-id.js';
-import { LIMITS, ports as outputs, TRIGGERS } from './workflow-spec.js';
+import { LIMITS, ports as outputs, TRIGGERS, switchLabel, DEFAULT_DATE_PATTERN, DATETIME_LIMITS } from './workflow-spec.js';
 import { createWorkflowFiles } from './workflow-file-ui.js';
 import { createContextEditor } from './workflow-context-ui.js';
+import { createSwitchEditor } from './workflow-switch-ui.js';
 import { createDryRunUI } from './workflow-dry-run-ui.js';
-import { GRID, CANVAS_SIZE, NODE_WIDTH as W, NODE_HEIGHT as H, nodePosition, arrangeNodes, fitNodesToCanvas, newNodePosition, capCameraPan } from './workflow-layout.js';
+import { createWorkflowDiagnostics } from './workflow-diagnostics-ui.js';
+import { GRID, CANVAS_SIZE, NODE_WIDTH as W, NODE_HEIGHT as H, nodeHeight, outputPosition, nodePosition, arrangeNodes, fitNodesToCanvas, newNodePosition, capCameraPan } from './workflow-layout.js';
 // Local editor drafts are separate from the saved definition used by the server.
 const TYPES = {
   start: { label: '이벤트 시작', group: 'trigger', icon: 'play', hint: '이벤트가 시작될 때' },
@@ -14,6 +16,7 @@ const TYPES = {
   datetime: { label: '날짜·시각', group: 'action', icon: 'clock', hint: '현재 시각과 시간대 변환' },
   context: { label: '컨텍스트 값 주입', group: 'action', icon: 'plus', hint: '실행 중 사용할 키·값 추가' },
   condition: { label: '조건', group: 'condition', icon: 'split', hint: '조건에 따라 분기' },
+  switch: { label: 'switch 분기', group: 'condition', icon: 'split', hint: '값에 따라 여러 경로 선택' },
   http: { label: 'API 호출', group: 'action', icon: 'globe', hint: 'HTTP 요청 구성하기' },
   finish: { label: '워크플로우 종료', group: 'action', icon: 'check', hint: '결과를 정하고 종료' }
 };
@@ -45,7 +48,9 @@ const DRAWINGS = {
   search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',
   success: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
   failure: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/>',
-  never: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>'
+  never: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  library: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M5 7h2m-2 5h2m-2 5h2"/>',
+  settings: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M15 3v18M17 7h2m-2 5h2m-2 5h2"/>'
 };
 const svg = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${DRAWINGS[name] ?? DRAWINGS.play}</svg>`;
 const EDITOR_TOOL_GROUPS = [
@@ -53,18 +58,19 @@ const EDITOR_TOOL_GROUPS = [
   ['구성 편집', [['arrange', 'arrange', '노드 자동 정렬'], ['revert', 'undo', '저장된 내용으로 되돌리기'], ['reload', 'reload', '다시 불러오기']]],
   ['실행 및 저장', [['history', 'history', '실행 이력'], ['dry-run', 'test', 'Dry-Run 테스트'], ['run', 'run', '수동 실행 · 저장된 구성으로 실제 API 호출'], ['save', 'save', '저장']]]
 ];
-const editorToolbar = () => `<div class="wf-toolbar" role="group" aria-label="워크플로우 작업">${EDITOR_TOOL_GROUPS.map(([label, items]) => `<div class="wf-toolbar-group" role="group" aria-label="${label}">${items.map(([command, icon, title]) => `<button type="button" class="wf-icon-button${command === 'save' ? ' wf-save-button' : ''}" data-wf-command="${command}" title="${title}" aria-label="${title}">${svg(icon)}</button>`).join('')}</div>`).join('')}</div>`;
-const outputLabel = port => ({ true: '일치', false: '불일치', next: '다음', error: '통신 오류', zero: '0건', one: '1건', many: '복수 건' })[port];
+const editorToolbar = () => `<div class="wf-toolbar" role="group" aria-label="워크플로우 작업"><div class="wf-toolbar-group" role="group" aria-label="편집 패널">${[['palette', 'library', '노드 목록'], ['inspector', 'settings', '노드 설정']].map(([dock, icon, label]) => `<button type="button" class="wf-icon-button" data-wf-dock="${dock}" aria-controls="wf-${dock}" aria-label="${label}" title="${label}">${svg(icon)}</button>`).join('')}</div>${EDITOR_TOOL_GROUPS.map(([label, items]) => `<div class="wf-toolbar-group" role="group" aria-label="${label}">${items.map(([command, icon, title]) => `<button type="button" class="wf-icon-button${command === 'save' ? ' wf-save-button' : ''}" data-wf-command="${command}" title="${title}" aria-label="${title}">${svg(icon)}</button>`).join('')}</div>`).join('')}</div>`;
+const outputLabel = (port, node) => node?.type === 'switch' ? switchLabel(node, port) : ({ true: '일치', false: '불일치', next: '다음', error: '통신 오류', zero: '0건', one: '1건', many: '복수 건' })[port];
 
 function makeNode(type, id, x, y) {
   return { id, type, ...nodePosition(x, y), name: TYPES[type].label, config: {
     ...(['start', 'end'].includes(type) ? { service: '모든 서비스' } : {}),
     ...(type === 'service-state' ? { service: '' } : {}),
     ...(type === 'find' ? { source: 'response.body', field: 'id', value: '', valueSource: 'literal' } : {}),
-    ...(type === 'datetime' ? { source: 'now', timezone: 'Asia/Seoul', format: 'iso' } : {}),
+    ...(type === 'datetime' ? { source: 'now', timezone: 'Asia/Seoul', format: 'iso', pattern: '' } : {}),
     ...(type === 'context' ? { entries: [] } : {}),
     ...(type === 'cron' ? { expression: '0 9 * * 1-5', timezone: 'Asia/Seoul' } : {}),
     ...(type === 'condition' ? { field: 'event.category', operator: 'equals', value: 'incident' } : {}),
+    ...(type === 'switch' ? { field:'trigger.service', cases:[] } : {}),
     ...(type === 'http' ? { method: 'POST', url: '', headers: '{\n  "Content-Type": "application/json"\n}', body: '{\n  "title": "{{event.title}}"\n}', onError: 'stop', timeoutMs: 10000, retries: 0 } : {}),
     ...(type === 'finish' ? { result: 'success', message: '' } : {})
   } };
@@ -78,8 +84,12 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   let saved = new Map(), request = 0, busy = false, mode = 'list', loaded = false;
   let search = '', pendingDelete = null;
   let host, controller, gridObserver, connecting = null, selectedEdge = null, drag = null, suppressClick = false;
+  const compactDocks = matchMedia('(max-width:1000px)');
+  let dockMode = compactDocks.matches;
+  let docks = { palette: !compactDocks.matches, inspector: !compactDocks.matches };
   const files = createWorkflowFiles({ api, escape, generation, active, toast, current: () => mode === 'editor' ? current() : null, imported: (data, isNew) => { if (isNew) { accept(data); currentId = data.id; } else Object.assign(current(), data, { selected: data.nodes[0]?.id ?? null }); mountEditor(); } });
   const contextEditor = createContextEditor({ escape });
+  const switchEditor = createSwitchEditor({ escape });
   const dryRunUI = createDryRunUI({ api, escape, formatTime, generation, authenticated, active, current: () => mode === 'editor' ? current() : null, types: TYPES });
   const current = () => workflows.find(item => item.id === currentId);
   const find = id => current().nodes.find(node => node.id === id);
@@ -91,6 +101,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   const definition = flow => ({ name: flow.name, nodes: flow.nodes, edges: flow.edges });
   const signature = flow => JSON.stringify({ ...definition(flow), secretEdits: flow.secretEdits ?? '{}' });
   const dirty = flow => saved.has(flow.id) && signature(flow) !== signature(saved.get(flow.id));
+  const diagnostics = createWorkflowDiagnostics({ api, escape, current, selected: () => selectedEdge ? null : current()?.selected, selectNode: id => { connecting = null; selectNode(id); }, centerNode, changed: updateEditorState, layout: () => { if (query('.wf-stage')) syncDocks(); }, svg });
   const editorState = flow => ({ ...flow, selected: flow.selected ?? flow.nodes[0]?.id ?? null, zoom: flow.zoom ?? 1, secretEdits: '{}' });
   function accept(flow) {
     const previous = workflows.find(item => item.id === flow.id);
@@ -115,7 +126,10 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     query('[data-wf-save-state]').textContent = changed ? '저장하지 않은 변경' : `저장됨 · v${current().definitionVersion}`;
     query('[data-wf-command="save"]').disabled = busy || !changed;
     query('[data-wf-command="revert"]').disabled = busy || !changed;
-    query('[data-wf-command="run"]').disabled = busy || changed;
+    diagnostics.update();
+    const run = query('[data-wf-command="run"]');
+    run.disabled = busy || changed || diagnostics.blocked();
+    run.title = changed ? '편집 내용을 저장한 뒤 실행해 주세요.' : diagnostics.blocked() ? '하단 오류 진단을 확인해 주세요.' : '수동 실행 · 저장된 구성으로 실제 API 호출';
   }
   async function refresh() {
     if (!active() || !authenticated() || busy || mode !== 'list') return;
@@ -140,6 +154,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   runDialog.id = 'workflow-run-dialog'; runDialog.className = 'dialog'; runDialog.setAttribute('aria-label', '워크플로우 수동 실행');
   document.body.append(runDialog);
   async function openRunDialog() {
+    if (diagnostics.blocked()) return;
     if (dirty(current())) { showError('편집 내용을 저장한 뒤 실행해 주세요.'); return; }
     const session = generation(), id = currentId;
     try {
@@ -232,6 +247,8 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function mountList() {
+    diagnostics.close();
+    switchEditor.close();
     dryRunUI.close();
     contextEditor.close();
     mode = 'list';
@@ -255,6 +272,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   function subtitle(node) {
     const c = node.config;
     if (node.type === 'context') return `${c.entries.length}개 키·값 · 더블 클릭하여 편집`;
+    if (node.type === 'switch') return c.field;
     if (node.type === 'http') return c.url || '호출할 URL을 입력하세요';
     if (node.type === 'condition') return `${c.field} ${ { equals: '=', notEquals: '≠', contains: '포함', exists: '값 있음', gt: '>', gte: '≥', lt: '<', lte: '≤' }[c.operator]} ${c.operator === 'exists' ? '' : c.value}`;
     if (node.type === 'cron') return `${c.expression} · ${c.timezone}`;
@@ -262,22 +280,27 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     return c.service || '모든 서비스';
   }
 
+  function outputMarkup(node, port) {
+    const outlet = outputPosition(node, port), label = outputLabel(port, node);
+    return `<button class="wf-port wf-output ${port}${node.type === 'switch' ? ' wf-switch-output' : ''}${connecting?.from === node.id && connecting.port === port ? ' is-connecting' : ''}" style="left:${outlet.x - 7}px;top:${outlet.y - 7}px" data-wf-output="${escape(node.id)}" data-port="${port}" aria-label="${escape(node.name)} ${escape(label)} 연결" title="${escape(label)} · 연결점을 누른 뒤 다음 노드를 선택하세요."><span>${escape(label)}</span></button>`;
+  }
+
   function nodeMarkup(node) {
     const type = TYPES[node.type], isTrigger = type.group === 'trigger';
-    return `<article class="wf-node wf-${type.group}${current().selected === node.id && !selectedEdge ? ' is-selected' : ''}" data-node-id="${escape(node.id)}" style="left:${node.x}px;top:${node.y}px" aria-label="${escape(node.name)} 노드">
+    return `<article class="wf-node ${node.type === 'switch' ? 'wf-switch-node ' : ''}wf-${type.group}${current().selected === node.id && !selectedEdge ? ' is-selected' : ''}" data-node-id="${escape(node.id)}" style="left:${node.x}px;top:${node.y}px;height:${nodeHeight(node)}px" aria-label="${escape(node.name)} 노드">
       ${!isTrigger ? `<button class="wf-port wf-input" data-wf-input="${escape(node.id)}" aria-label="${escape(node.name)}에 연결" title="이 노드로 연결"></button>` : ''}
-      <button class="wf-node-select" data-wf-select="${escape(node.id)}" aria-pressed="${current().selected === node.id && !selectedEdge}"><span class="wf-node-top"><span class="wf-type-icon">${svg(type.icon)}</span><span><small>${type.label}</small><strong>${escape(node.name)}</strong></span></span><span class="wf-node-description">${escape(subtitle(node))}</span><span class="wf-node-caption">${node.type === 'http' ? `<b>${escape(node.config.method)}</b> HTTP 요청` : node.type === 'context' ? '이후 노드에서 context.키로 사용' : isTrigger ? '시작점' : node.type === 'condition' ? '두 갈래로 분기' : '이 경로의 마지막 동작'}</span></button>
-      ${outputs(node).map(port => `<button class="wf-port wf-output ${port}${connecting?.from === node.id && connecting.port === port ? ' is-connecting' : ''}" data-wf-output="${escape(node.id)}" data-port="${port}" aria-label="${escape(node.name)} ${outputLabel(port)} 연결" title="노드 아래의 연결점을 누른 뒤 다음 노드를 선택하세요."><span>${outputLabel(port)}</span></button>`).join('')}
+      <button class="wf-node-select" data-wf-select="${escape(node.id)}" aria-pressed="${current().selected === node.id && !selectedEdge}"><span class="wf-node-top"><span class="wf-type-icon">${svg(type.icon)}</span><span><small>${type.label}</small><strong>${escape(node.name)}</strong></span></span><span class="wf-node-description">${escape(subtitle(node))}</span><span class="wf-node-caption">${node.type === 'http' ? `<b>${escape(node.config.method)}</b> HTTP 요청` : node.type === 'context' ? '이후 노드에서 context.키로 사용' : node.type === 'switch' ? `${node.config.cases.length}개 분기 · 더블 클릭하여 편집` : isTrigger ? '시작점' : node.type === 'condition' ? '두 갈래로 분기' : '이 경로의 마지막 동작'}</span></button>
+      ${outputs(node).map(port => outputMarkup(node, port)).join('')}
     </article>`;
   }
 
   function edgePath(edge) {
     const from = find(edge.from), to = find(edge.to);
     if (!from || !to) return '';
-    const sx = from.x + W * (edge.port === 'true' ? .28 : ['false', 'error'].includes(edge.port) ? .72 : .5), sy = from.y + H;
+    const outlet = outputPosition(from, edge.port), sx = from.x + outlet.x, sy = from.y + outlet.y;
     const tx = to.x + W / 2, ty = to.y;
     const bend = Math.max(50, Math.abs(ty - sy) * .5);
-    return `M ${sx} ${sy} C ${sx} ${sy + bend}, ${tx} ${ty - bend}, ${tx} ${ty}`;
+    return `M ${sx} ${sy} C ${outlet.side === 'right' ? sx + bend : sx} ${outlet.side === 'right' ? sy : sy + bend}, ${tx} ${ty - bend}, ${tx} ${ty}`;
   }
 
   function renderEdges() {
@@ -287,7 +310,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function dimensions() {
-    return { width: Math.max(720, ...current().nodes.map(node => node.x + W + 65)), height: Math.max(640, ...current().nodes.map(node => node.y + H + 80)) };
+    return { width: Math.max(720, ...current().nodes.map(node => node.x + W + 65)), height: Math.max(640, ...current().nodes.map(node => node.y + nodeHeight(node) + 80)) };
   }
 
   function syncGrid() {
@@ -334,13 +357,76 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function revealNode(node) {
-    const stage = query('.wf-stage'), flow = current(), margin = 24;
+    const flow = current(), area = canvasArea();
     const left = (flow.panX ?? 0) + node.x * flow.zoom, top = (flow.panY ?? 0) + node.y * flow.zoom;
-    const maxLeft = Math.max(margin, stage.clientWidth - W * flow.zoom - margin);
-    const maxTop = Math.max(margin, stage.clientHeight - (H + 32) * flow.zoom - margin);
-    flow.panX = (flow.panX ?? 0) + Math.max(margin, Math.min(maxLeft, left)) - left;
-    flow.panY = (flow.panY ?? 0) + Math.max(margin, Math.min(maxTop, top)) - top;
+    const maxLeft = Math.max(area.left, area.right - W * flow.zoom);
+    const maxTop = Math.max(area.top, area.bottom - (nodeHeight(node) + 32) * flow.zoom);
+    flow.panX = (flow.panX ?? 0) + Math.max(area.left, Math.min(maxLeft, left)) - left;
+    flow.panY = (flow.panY ?? 0) + Math.max(area.top, Math.min(maxTop, top)) - top;
     sizeCanvas();
+  }
+
+  function centerNode(id) {
+    const node = find(id);
+    if (!node || drag) return;
+    let area = canvasArea();
+    if (compactDocks.matches && area.bottom - area.top < nodeHeight(node) * current().zoom + 32) { setDock('inspector', false); area = canvasArea(); }
+    current().panX = (area.left + area.right) / 2 - (node.x + W / 2) * current().zoom;
+    current().panY = (area.top + area.bottom) / 2 - (node.y + nodeHeight(node) / 2) * current().zoom;
+    sizeCanvas();
+  }
+
+  // Docks overlay the full canvas. Fit and keyboard focus use its unobscured area.
+  function canvasArea() {
+    const stage = query('.wf-stage'), rect = stage.getBoundingClientRect();
+    const area = { left:24, right:stage.clientWidth - 24, top:query('.wf-canvas-bar').getBoundingClientRect().bottom - rect.top + 16, bottom:query('.wf-canvas-footer').getBoundingClientRect().top - rect.top - 16 };
+    const diagnosticsPanel = query('.wf-diagnostics');
+    if (diagnosticsPanel && !diagnosticsPanel.hidden) area.bottom = Math.min(area.bottom, diagnosticsPanel.getBoundingClientRect().top - rect.top - 16);
+    for (const name of ['palette', 'inspector']) {
+      const panel = query(`.wf-${name}`);
+      if (panel.hidden) continue;
+      const bounds = panel.getBoundingClientRect();
+      if (compactDocks.matches) {
+        if (name === 'palette') area.top = Math.max(area.top, bounds.bottom - rect.top + 16);
+        else area.bottom = Math.min(area.bottom, bounds.top - rect.top - 16);
+      } else if (name === 'palette') area.left = bounds.right - rect.left + 16;
+      else area.right = bounds.left - rect.left - 16;
+    }
+    area.right = Math.max(area.left + 1, area.right);
+    area.bottom = Math.max(area.top + 1, area.bottom);
+    return area;
+  }
+
+  function syncDocks() {
+    for (const name of ['palette', 'inspector']) {
+      query(`.wf-${name}`).hidden = !docks[name];
+      query(`[data-wf-dock="${name}"]`).setAttribute('aria-expanded', String(docks[name]));
+    }
+    const editor = query('.wf-editor');
+    editor.style.setProperty('--wf-bar-height', `${query('.wf-canvas-bar').offsetHeight}px`);
+    const panel = query('.wf-diagnostics');
+    editor.style.setProperty('--wf-diagnostics-space', `${panel && !panel.hidden ? panel.offsetHeight + 12 : 0}px`);
+    const area = canvasArea(), empty = query('.wf-canvas-empty');
+    empty.style.left = `${(area.left + area.right) / 2}px`;
+    empty.style.top = `${(area.top + area.bottom) / 2}px`;
+    sizeCanvas();
+  }
+
+  function setDock(name, open) {
+    if (compactDocks.matches && open) docks = { palette:false, inspector:false };
+    docks[name] = open;
+    syncDocks();
+  }
+
+  function syncDockMode() {
+    if (dockMode === compactDocks.matches) return;
+    dockMode = compactDocks.matches;
+    docks = { palette:!dockMode, inspector:!dockMode };
+  }
+
+  function finishInspector() {
+    query('.wf-inspector>.wf-panel-title').insertAdjacentHTML('beforeend', `<button type="button" class="wf-icon-button wf-dock-close" data-wf-close-dock="inspector" aria-label="노드 설정 접기" title="노드 설정 접기">${svg('close')}</button>`);
+    query('.wf-inspector-body, .wf-inspector-empty').insertAdjacentHTML('beforeend', legacySecrets());
   }
 
   function renderCanvas() {
@@ -355,7 +441,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function renderStatus() {
     query('.wf-count').textContent = `${current().nodes.length}개 노드 · ${current().edges.length}개 연결`;
-    query('.wf-canvas-help').textContent = connecting ? `${find(connecting.from)?.name}의 ‘${outputLabel(connecting.port)}’ → 연결할 노드를 선택하세요. Esc로 취소` : '';
+    query('.wf-canvas-help').textContent = connecting ? `${find(connecting.from)?.name}의 ‘${outputLabel(connecting.port, find(connecting.from))}’ → 연결할 노드를 선택하세요. Esc로 취소` : '';
     query('.wf-editor-footer').hidden = !connecting;
     query('.wf-stage').classList.toggle('is-connecting', !!connecting);
     updateEditorState();
@@ -364,10 +450,14 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   function fit() {
     const stage = query('.wf-stage');
     if (!stage) return;
-    const { width, height } = dimensions();
-    current().zoom = Math.max(.35, Math.min(1, (stage.clientWidth - 32) / width, (stage.clientHeight - 24) / height));
-    current().panX = (stage.clientWidth - width * current().zoom) / 2;
-    current().panY = (stage.clientHeight - height * current().zoom) / 2;
+    const area = canvasArea(), nodes = current().nodes;
+    const left = nodes.length ? Math.min(...nodes.map(node => node.x)) : 0;
+    const top = nodes.length ? Math.min(...nodes.map(node => node.y - 12)) : 0;
+    const width = Math.max(...nodes.map(node => node.x + W), left + W) - left;
+    const height = Math.max(...nodes.map(node => node.y + nodeHeight(node) + 36), top + H) - top;
+    current().zoom = Math.max(.35, Math.min(1, (area.right - area.left) / width, (area.bottom - area.top) / height));
+    current().panX = (area.left + area.right - width * current().zoom) / 2 - left * current().zoom;
+    current().panY = (area.top + area.bottom - height * current().zoom) / 2 - top * current().zoom;
     sizeCanvas();
   }
 
@@ -375,12 +465,14 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     const inspector = query('.wf-inspector');
     const edge = current().edges.find(item => item.id === selectedEdge);
     if (edge) {
-      inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('link')} 연결 설정</span></div><div class="wf-inspector-body"><p class="wf-section-label">선택한 연결</p><div class="wf-connection-summary"><strong>${escape(find(edge.from).name)}</strong><span>${outputLabel(edge.port)} ↓</span><strong>${escape(find(edge.to).name)}</strong></div><p class="wf-help">연결을 지워도 양쪽 노드는 그대로 남습니다.</p><button class="wf-delete" data-wf-command="delete-edge">${svg('trash')} 연결 삭제</button></div>`;
+      inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('link')} 연결 설정</span></div><div class="wf-inspector-body"><p class="wf-section-label">선택한 연결</p><div class="wf-connection-summary"><strong>${escape(find(edge.from).name)}</strong><span>${escape(outputLabel(edge.port, find(edge.from)))} ↓</span><strong>${escape(find(edge.to).name)}</strong></div><p class="wf-help">연결을 지워도 양쪽 노드는 그대로 남습니다.</p><button class="wf-delete" data-wf-command="delete-edge">${svg('trash')} 연결 삭제</button></div>`;
+      finishInspector();
       return;
     }
     const node = find(current().selected);
     if (!node) {
       inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('arrange')} 노드 설정</span></div><div class="wf-inspector-empty">${svg('fit')}<h3>노드를 선택하세요</h3><p>캔버스의 노드를 선택하면<br>이곳에서 내용을 바꿀 수 있습니다.</p></div>`;
+      finishInspector();
       return;
     }
     const c = node.config, type = TYPES[node.type];
@@ -391,16 +483,18 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (node.type === 'http') fields = `${select('메서드', 'method', c.method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].map(value => [value, value]))}${field('요청 URL', 'url', c.url, 'type="url" spellcheck="false" maxlength="2000"')}${area('헤더 (JSON)', 'headers', c.headers, 3)}${area('요청 본문', 'body', c.body, 5)}<p class="wf-help">변수 예시: {{event.title}}, {{response.body.id}}, {{context.token}}. URL 변수는 인코딩하며 JSON 본문의 문자열은 따옴표를 보존합니다.</p>${field('요청 제한 시간 (ms)', 'timeoutMs', String(c.timeoutMs ?? 10000), 'type="number" min="100" max="30000" step="100"')}${field('통신 오류 재시도 횟수 (같은 요청 반복)', 'retries', String(c.retries ?? 0), 'type="number" min="0" max="3"')}${select('통신 오류가 발생하면', 'onError', c.onError, [['stop', '워크플로우 실패로 종료'], ['continue', '다음 노드로 계속 진행'], ['branch', '오류 연결로 진행']])}<div class="wf-note">HTTP 상태와 응답 본문은 조건 노드에서 판단합니다. 리다이렉트는 따라가지 않으며 응답은 최대 128KB입니다.</div>`;
     if (node.type === 'service-state') fields = field('서비스 문자열 (비우면 모든 서비스)', 'service', c.service, 'maxlength="100"') + '<p>활성 이벤트 전체를 집계합니다. trigger.service / previous / severity를 사용하세요.</p>';
     if (node.type === 'find') fields = field('배열 경로', 'source', c.source) + field('항목 안의 키 경로', 'field', c.field) + select('비교 대상', 'valueSource', c.valueSource, [['literal', '고정값'], ['path', '값 경로']]) + field('비교 값 또는 경로', 'value', c.value);
-    if (node.type === 'datetime') fields = field('시각 경로 또는 now', 'source', c.source) + field('IANA 시간대', 'timezone', c.timezone) + select('출력 형식', 'format', c.format, [['iso','UTC ISO'],['local','현지 ISO (시차 포함)'],['date','날짜'],['time','시각'],['unix-ms','Unix 밀리초']]);
+    if (node.type === 'datetime') fields = field('시각 경로 또는 now', 'source', c.source) + field('IANA 시간대', 'timezone', c.timezone) + select('출력 형식', 'format', c.format, [['iso','UTC ISO'],['local','현지 ISO (시차 포함)'],['date','날짜'],['time','시각'],['unix-ms','Unix 밀리초'],['custom','직접 지정']]) + (c.format === 'custom' ? field('날짜·시각 형식', 'pattern', c.pattern || '', `maxlength="${DATETIME_LIMITS.pattern}" placeholder="${DEFAULT_DATE_PATTERN}" spellcheck="false"`) + `<p class="wf-help">yyyy 연도 · MM 월 · dd 일 · HH 시(00~23) · mm 분 · ss 초 · SSS 밀리초 · XXX 시차<br>예: <code>yyyy/MM/dd HH:mm:ss</code><br>영문 고정 문구는 작은따옴표로 감싸세요. 예: <code>yyyyMMdd'T'HHmmss</code><br>형식은 128자, 출력은 256자까지 지원합니다.</p>` : '') + `<p class="wf-help">출력은 <code>nodes.${escape(node.id)}.value</code>, 개별 값은 <code>nodes.${escape(node.id)}.components.year</code>처럼 참조합니다.</p>`;
     if (node.type === 'context') fields = `<p class="wf-help">${c.entries.length}개 키·값을 주입합니다. 노드를 더블 클릭하거나 아래 버튼으로 편집하세요.</p><button class="button secondary" data-wf-command="edit-context">키·값 편집</button><div class="wf-note">이후 노드에서 <code>{{context.token}}</code>처럼 참조합니다. 같은 키는 나중에 주입한 값으로 바뀝니다.</div>`;
+    if (node.type === 'switch') fields = `<p class="wf-help">비교 경로: <code>${escape(c.field)}</code><br>${c.cases.length}개 분기와 기본 경로 중 하나로 진행합니다.</p><button class="button secondary" data-wf-command="edit-switch">분기 편집</button><div class="wf-note">노드를 더블 클릭해 분기 값을 편집합니다. 자료형과 값이 모두 같아야 일치하며, 값이 누락되거나 일치하지 않으면 기본 경로로 진행합니다.</div>`;
     if (node.type === 'condition') fields += select('비교 대상', 'valueSource', c.valueSource || 'literal', [['literal','고정값'],['path','값 경로']]) + area('복합 조건 JSON (입력하면 위 단일 조건 대신 사용)', 'rules', c.rules || '', 6);
     if (node.type === 'http') fields += select('요청 의도', 'intent', c.intent || 'auto', [['auto','메서드 기준'],['read','조회'],['change','변경']]) + select('외부 중복 방지', 'idempotency', c.idempotency || 'none', [['none','검증되지 않음'],['verified','외부 보장 검증 완료']]) + select('응답 기록', 'outputMode', c.outputMode || 'summary', [['summary','가린 요약'],['none','본문 미저장'],['allowlist','허용 필드만']]) + field('기록 허용 경로 (쉼표 구분)', 'outputPaths', c.outputPaths || '');
     if (TRIGGERS.includes(node.type) && node.type !== 'service-state') fields += field('변경 대상 서비스 문자열 (호출 직렬화)', 'executionService', c.executionService || '', 'maxlength="100"');
     if (node.type === 'finish') fields = `${select('워크플로우 결과', 'result', c.result, [['success', '성공'], ['failure', '실패'], ['review', '확인 필요'], ['skipped', '생략']])}${area('종료 사유', 'message', c.message, 3)}`;
     inspector.innerHTML = `<div class="wf-panel-title"><span>${svg('arrange')} 노드 설정</span><div class="wf-node-actions"><button type="button" class="wf-icon-button" data-wf-command="duplicate-node" aria-label="노드 복제" title="${current().nodes.length >= LIMITS.nodes ? '최대 100개 노드를 배치할 수 있습니다.' : '노드 복제'}" ${current().nodes.length >= LIMITS.nodes ? 'disabled' : ''}>${svg('copy')} 복제</button><button type="button" class="wf-icon-button wf-node-delete" data-wf-command="delete-node" aria-label="노드 삭제" aria-keyshortcuts="Delete" title="노드 삭제 (Delete)">${svg('trash')} 삭제</button></div></div><div class="wf-inspector-body"><div class="wf-inspector-type wf-${type.group}"><span class="wf-type-icon">${svg(type.icon)}</span><div><strong>${type.label}</strong><small>${type.hint}</small></div></div>${field('노드 이름', 'name', node.name, 'maxlength="80"')}<div class="wf-field-divider"></div>${fields}</div>`;
+    finishInspector();
   }
 
-  function refreshSelection() { renderCanvas(); renderInspector(); }
+  function refreshSelection() { renderCanvas(); renderInspector(); syncDocks(); }
 
   function selectNode(id) {
     current().selected = id; selectedEdge = null;
@@ -411,6 +505,8 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       element.querySelector('.wf-node-select').setAttribute('aria-pressed', String(selected));
     }
     renderEdges(); renderInspector(); renderStatus();
+    // Preserve pointer targets through a double click; move only after explicit fit/focus.
+    setDock('inspector', true);
   }
 
   function editContext(id) {
@@ -419,6 +515,18 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     selectNode(id);
     contextEditor.open(node, entries => {
       node.config.entries = entries;
+      refreshSelection();
+    });
+  }
+
+  function editSwitch(id) {
+    const node = find(id);
+    if (busy || connecting || node?.type !== 'switch') return;
+    selectNode(id);
+    switchEditor.open(node, config => {
+      node.config = config;
+      current().edges = current().edges.filter(edge => edge.from !== id || outputs(node).includes(edge.port));
+      Object.assign(node, nodePosition(node.x, node.y, node));
       refreshSelection();
     });
   }
@@ -432,11 +540,13 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
 
   function addNode(type) {
     if (current().nodes.length >= LIMITS.nodes) { toast('최대 100개 노드를 배치할 수 있습니다.'); return; }
-    const position = newNodePosition(current().nodes);
-    const node = makeNode(type, `node-${randomUUID()}`, position.x, position.y);
+    const node = makeNode(type, `node-${randomUUID()}`, 36, 36);
+    Object.assign(node, newNodePosition(current().nodes, node));
     current().nodes.push(node); current().selected = node.id; selectedEdge = null; connecting = null;
     refreshSelection();
+    if (compactDocks.matches) setDock('palette', false);
     revealNode(node);
+    if (compactDocks.matches) query(`[data-wf-select="${node.id}"]`).focus({ preventScroll:true });
   }
 
   function deleteSelectedNode() {
@@ -458,8 +568,8 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     const node = structuredClone(source);
     node.id = `node-${randomUUID()}`;
     node.name = `${source.name.slice(0, 76)} 복사본`;
-    Object.assign(node, nodePosition(source.x + GRID * 2, source.y + GRID * 2));
-    if (flow.nodes.some(item => item.x === node.x && item.y === node.y)) Object.assign(node, newNodePosition(flow.nodes));
+    Object.assign(node, nodePosition(source.x + GRID * 2, source.y + GRID * 2, node));
+    if (flow.nodes.some(item => item.x === node.x && item.y === node.y)) Object.assign(node, newNodePosition(flow.nodes, node));
     flow.nodes.push(node); flow.selected = node.id; selectedEdge = null; connecting = null;
     refreshSelection(); revealNode(node);
     query(`[data-wf-select="${node.id}"]`).focus({ preventScroll: true });
@@ -491,6 +601,17 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (suppressClick) { suppressClick = false; if (event.detail > 0) return; }
     const target = event.target.closest('button, [data-wf-edge]');
     if (!target) return;
+    if (target.dataset.wfDock) {
+      const name = target.dataset.wfDock;
+      setDock(name, !docks[name]);
+      if (docks[name] && name === 'inspector' && find(current().selected)) revealNode(find(current().selected));
+      return;
+    }
+    if (target.dataset.wfCloseDock) {
+      const name = target.dataset.wfCloseDock;
+      query(`[data-wf-dock="${name}"]`).focus({ preventScroll:true });
+      setDock(name, false); return;
+    }
     if (target.dataset.wfHistory) { openRuns(target.dataset.wfHistory); return; }
     if (target.dataset.wfToggle) {
       const flow = workflows.find(item => item.id === target.dataset.wfToggle);
@@ -531,7 +652,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       else selectNode(nodeId);
       return;
     }
-    if (target.dataset.wfEdge) { selectedEdge = target.dataset.wfEdge; connecting = null; refreshSelection(); return; }
+    if (target.dataset.wfEdge) { selectedEdge = target.dataset.wfEdge; connecting = null; refreshSelection(); setDock('inspector', true); return; }
     switch (target.dataset.wfCommand) {
       case 'upload': files.upload().catch(error => showError(error.message)); break;
       case 'download': files.download().catch(error => showError(error.message)); break;
@@ -548,6 +669,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       case 'history': openRuns(currentId); break;
       case 'rename': startNameEdit(); break;
       case 'edit-context': editContext(current().selected); break;
+      case 'edit-switch': editSwitch(current().selected); break;
       case 'list': mountList(); break;
       case 'clear-search': search = ''; query('[data-wf-search]').value = ''; renderListRows(); query('[data-wf-search]').focus(); break;
       case 'delete-node': deleteSelectedNode(); break;
@@ -590,6 +712,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     const key = event.target.dataset.wfField, node = find(current().selected);
     if (!key || !node) return;
     if (key === 'name') node.name = event.target.value;
+    else if (node.type === 'http' && ['timeoutMs', 'retries'].includes(key) && event.target.value !== '') node.config[key] = Number(event.target.value);
     else node.config[key] = event.target.value;
     renderCanvas();
   }
@@ -628,7 +751,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       sizeCanvas(); return;
     }
     const zoom = current().zoom;
-    Object.assign(drag.node, nodePosition(drag.startX + dx / zoom, drag.startY + dy / zoom));
+    Object.assign(drag.node, nodePosition(drag.startX + dx / zoom, drag.startY + dy / zoom, drag.node));
     const element = drag.handle.closest('.wf-node');
     element.style.left = `${drag.node.x}px`; element.style.top = `${drag.node.y}px`; element.classList.add('is-dragging');
     renderEdges(); sizeCanvas(); updateEditorState();
@@ -652,9 +775,12 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   }
 
   function mountEditor() {
+    diagnostics.close();
+    switchEditor.close();
     dryRunUI.close();
     contextEditor.close();
     fitNodesToCanvas(current().nodes, current().edges);
+    syncDockMode();
     mode = 'editor'; request++;
     pendingDelete = null; deleteDialog.close();
     gridObserver?.disconnect();
@@ -663,19 +789,24 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     host.classList.add('workflow-main');
     host.innerHTML = `<section class="wf-workspace" aria-label="워크플로우 편집">
       <p class="form-error" data-wf-error hidden></p>
-      ${legacySecrets()}<div class="wf-editor">
+      <div class="wf-editor">
       <div class="wf-canvas-bar" title="빈 배경을 끌어 화면 이동 · 마우스 휠로 확대·축소 · 노드를 끌어 이동 · 아래 연결점을 눌러 연결 · 연결선을 눌러 편집"><div class="wf-heading-title"><button type="button" class="wf-icon-button" data-wf-command="list" title="워크플로우 목록" aria-label="워크플로우 목록">${svg('back')}</button><div class="wf-heading-copy"><h1><button class="wf-title-button" data-wf-command="rename" title="워크플로우 이름 편집"><span data-wf-editor-title>${escape(current().name || '이름 없는 워크플로우')}</span>${svg('edit')}</button><input class="wf-title-input" data-wf-name value="${escape(current().name)}" maxlength="80" aria-label="워크플로우 이름" hidden></h1><span class="wf-save-state" data-wf-save-state></span></div></div>${editorToolbar()}</div>
-      <aside class="wf-palette" aria-label="노드 목록"><div class="wf-library">${[['trigger', '시작 이벤트'], ['condition', '흐름 제어'], ['action', '액션']].map(([group, label]) => `<section class="wf-node-group"><h2>${label}</h2>${Object.entries(TYPES).filter(([, type]) => type.group === group).map(([id, type]) => `<button class="wf-library-item wf-${group}" data-wf-add="${id}"><span class="wf-type-icon">${svg(type.icon)}</span><span><strong>${type.label}</strong><small>${type.hint}</small></span>${svg('plus')}</button>`).join('')}</section>`).join('')}</div></aside>
-      <div class="wf-canvas"><div class="wf-stage" tabindex="0" aria-label="노드 캔버스"><div class="wf-world-wrap"><div class="wf-world"><svg class="wf-boundary" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" aria-hidden="true"><rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}"/><text x="18" y="20">(0, 0)</text><text x="${CANVAS_SIZE - 18}" y="${CANVAS_SIZE - 18}" text-anchor="end">(${CANVAS_SIZE}, ${CANVAS_SIZE})</text></svg><svg class="wf-edges" aria-label="노드 연결"></svg><div class="wf-nodes"></div></div></div><div class="wf-canvas-empty" hidden>${svg('arrange')}<h3>첫 번째 노드를 추가해 보세요</h3><p>시작 이벤트를 고르고, 필요한 동작을 연결하세요.</p><button class="button secondary" data-wf-add="start">${svg('plus')} 이벤트 시작 추가</button></div></div><div class="wf-canvas-footer"><span class="wf-count"></span><div class="wf-zoom"><button class="wf-icon-button" data-wf-command="zoom-out" aria-label="축소">${svg('minus')}</button><span data-wf-zoom-label></span><button class="wf-icon-button" data-wf-command="zoom-in" aria-label="확대">${svg('plus')}</button><span class="wf-zoom-divider"></span><button class="wf-icon-button" data-wf-command="fit" aria-label="화면에 맞추기" title="화면에 맞추기">${svg('fit')}</button></div></div></div>
-      <aside class="wf-inspector" aria-label="노드 설정"></aside><div class="wf-editor-footer"><span class="wf-canvas-help" role="status"></span></div></div></section>`;
+      <aside class="wf-palette" id="wf-palette" aria-label="노드 목록"><div class="wf-panel-title"><span>${svg('library')} 노드 목록</span><button type="button" class="wf-icon-button wf-dock-close" data-wf-close-dock="palette" aria-label="노드 목록 접기" title="노드 목록 접기">${svg('close')}</button></div><div class="wf-library">${[['trigger', '시작 이벤트'], ['condition', '흐름 제어'], ['action', '액션']].map(([group, label]) => `<section class="wf-node-group"><h2>${label}</h2>${Object.entries(TYPES).filter(([, type]) => type.group === group).map(([id, type]) => `<button class="wf-library-item wf-${group}" data-wf-add="${id}"><span class="wf-type-icon">${svg(type.icon)}</span><span><strong>${type.label}</strong><small>${type.hint}</small></span>${svg('plus')}</button>`).join('')}</section>`).join('')}</div></aside>
+      <div class="wf-canvas"><div class="wf-stage" tabindex="0" aria-label="노드 캔버스"><div class="wf-world-wrap"><div class="wf-world"><svg class="wf-boundary" width="${CANVAS_SIZE}" height="${CANVAS_SIZE}" aria-hidden="true"><rect width="${CANVAS_SIZE}" height="${CANVAS_SIZE}"/></svg><svg class="wf-edges" aria-label="노드 연결"></svg><div class="wf-nodes"></div></div></div><div class="wf-canvas-empty" hidden>${svg('arrange')}<h3>첫 번째 노드를 추가해 보세요</h3><p>시작 이벤트를 고르고, 필요한 동작을 연결하세요.</p><button class="button secondary" data-wf-add="start">${svg('plus')} 이벤트 시작 추가</button></div></div><div class="wf-canvas-footer"><span class="wf-count"></span><div class="wf-zoom"><button class="wf-icon-button" data-wf-command="zoom-out" aria-label="축소">${svg('minus')}</button><span data-wf-zoom-label></span><button class="wf-icon-button" data-wf-command="zoom-in" aria-label="확대">${svg('plus')}</button><span class="wf-zoom-divider"></span><button class="wf-icon-button" data-wf-command="fit" aria-label="화면에 맞추기" title="화면에 맞추기">${svg('fit')}</button></div></div></div>
+      <aside class="wf-inspector" id="wf-inspector" aria-label="노드 설정"></aside><div class="wf-editor-footer"><span class="wf-canvas-help" role="status"></span></div></div></section>`;
     const settings = { signal: controller.signal };
     host.addEventListener('click', onClick, settings);
     host.addEventListener('dblclick', event => {
       const handle = event.target.closest('[data-wf-select]');
-      if (handle) editContext(handle.dataset.wfSelect);
+      if (handle) { editContext(handle.dataset.wfSelect); editSwitch(handle.dataset.wfSelect); }
     }, settings);
     host.addEventListener('input', onInput, settings);
     host.addEventListener('change', event => {
+      if (event.target.dataset.wfField === 'format' && find(current().selected)?.type === 'datetime') {
+        const node = find(current().selected);
+        if (node.config.format === 'custom' && !node.config.pattern) node.config.pattern = DEFAULT_DATE_PATTERN;
+        renderCanvas(); renderInspector();
+      }
       if (['operator', 'onError'].includes(event.target.dataset.wfField)) {
         if (event.target.dataset.wfField === 'onError' && event.target.value !== 'branch') current().edges = current().edges.filter(edge => edge.from !== current().selected || edge.port !== 'error');
         renderCanvas(); renderInspector();
@@ -693,8 +824,8 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
         if (deleteSelectedNode()) event.preventDefault();
         return;
       }
-      if (event.key === 'Enter' && event.target.matches('[data-wf-select]') && find(event.target.dataset.wfSelect)?.type === 'context') {
-        event.preventDefault(); editContext(event.target.dataset.wfSelect); return;
+      if (event.key === 'Enter' && event.target.matches('[data-wf-select]') && ['context', 'switch'].includes(find(event.target.dataset.wfSelect)?.type)) {
+        event.preventDefault(); editContext(event.target.dataset.wfSelect); editSwitch(event.target.dataset.wfSelect); return;
       }
       if (event.target.matches('[data-wf-name]') && !event.isComposing && ['Enter', 'Escape'].includes(event.key)) {
         event.preventDefault(); finishNameEdit(event.key === 'Escape'); query('[data-wf-command="rename"]').focus(); return;
@@ -707,24 +838,26 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
         current().panY = (current().panY ?? 0) + (event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0);
         sizeCanvas();
       }
-      if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('[data-wf-edge]')) { event.preventDefault(); selectedEdge = event.target.dataset.wfEdge; refreshSelection(); }
+      if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('[data-wf-edge]')) { event.preventDefault(); selectedEdge = event.target.dataset.wfEdge; refreshSelection(); setDock('inspector', true); }
     }, settings);
     host.addEventListener('pointerdown', onPointerDown, settings);
     host.addEventListener('pointermove', onPointerMove, settings);
     host.addEventListener('pointerup', endDrag, settings);
     host.addEventListener('pointercancel', endDrag, settings);
     host.addEventListener('lostpointercapture', endDrag, settings);
+    diagnostics.mount(host);
     renderCanvas(); renderInspector();
     const stage = query('.wf-stage');
     stage.addEventListener('wheel', onWheel, { ...settings, passive: false });
-    gridObserver = new ResizeObserver(sizeCanvas);
+    compactDocks.addEventListener('change', () => {
+      syncDockMode();
+      syncDocks();
+    }, settings);
+    gridObserver = new ResizeObserver(syncDocks);
     gridObserver.observe(stage);
-    if (stage.clientWidth < 500) {
-      current().zoom = .85;
-      current().panX = (stage.clientWidth - dimensions().width * current().zoom) / 2;
-      current().panY = 12;
-      sizeCanvas();
-    } else fit();
+    gridObserver.observe(query('.wf-canvas-bar'));
+    gridObserver.observe(query('.wf-diagnostics'));
+    syncDocks(); fit();
   }
 
   function refreshDate() {
@@ -734,5 +867,5 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
     if (context.outerHTML !== markup) context.outerHTML = markup;
   }
 
-  return { mount() { if (mode === 'editor' && current()) mountEditor(); else mountList(); }, refresh, refreshDate, clear() { dryRunUI.close(); contextEditor.close(); files.close(); pendingDelete = null; deleteDialog.close(); gridObserver?.disconnect(); controller?.abort(); controller = null; host = null; request++; runDialog.close(); runDialog.replaceChildren(); saved.clear(); workflows = []; currentId = null; createKey = null; loaded = false; busy = false; mode = 'list'; search = ''; connecting = null; selectedEdge = null; drag = null; } };
+  return { mount() { if (mode === 'editor' && current()) mountEditor(); else mountList(); }, refresh, refreshDate, clear() { diagnostics.close(); switchEditor.close(); dryRunUI.close(); contextEditor.close(); files.close(); pendingDelete = null; deleteDialog.close(); gridObserver?.disconnect(); controller?.abort(); controller = null; host = null; request++; runDialog.close(); runDialog.replaceChildren(); saved.clear(); workflows = []; currentId = null; createKey = null; loaded = false; busy = false; mode = 'list'; search = ''; connecting = null; selectedEdge = null; drag = null; } };
 }

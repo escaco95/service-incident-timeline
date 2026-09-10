@@ -1,0 +1,18 @@
+{
+  "format": "service-incident-timeline/workflow",
+  "formatVersion": 1,
+  "definition": {
+    "name": "날짜 형식 지정 예제",
+    "nodes": [
+      { "id": "root", "type": "cron", "config": { "expression": "0 9 * * *", "timezone": "UTC" } },
+      { "id": "clock", "type": "datetime", "config": { "source": "now", "timezone": "UTC", "format": "custom", "pattern": "yyyy/MM/dd HH:mm:ss" } },
+      { "id": "http", "type": "http", "config": { "method": "POST", "url": "https://example.invalid/date", "headers": "{\"Content-Type\":\"application/json\"}", "body": "{\"formatted\":\"{{nodes.clock.value}}\",\"compact\":\"{{nodes.clock.components.year}}{{nodes.clock.components.month}}{{nodes.clock.components.day}}\",\"offset\":\"{{nodes.clock.components.offset}}\"}", "onError": "stop", "retries": 0 } },
+      { "id": "done", "type": "finish", "config": { "result": "success", "message": "{{nodes.clock.value}}" } }
+    ],
+    "edges": [
+      { "id": "root-clock", "from": "root", "to": "clock", "port": "next" },
+      { "id": "clock-http", "from": "clock", "to": "http", "port": "next" },
+      { "id": "http-done", "from": "http", "to": "done", "port": "next" }
+    ]
+  }
+}

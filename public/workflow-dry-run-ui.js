@@ -1,4 +1,4 @@
-import { TRIGGERS } from './workflow-spec.js';
+import { TRIGGERS, switchLabel } from './workflow-spec.js';
 import { DRY_RUN_LIMITS, mergeDryRunSetup } from './workflow-dry-run-spec.js';
 import { createDryRunEvents } from './workflow-dry-run-events.js';
 
@@ -63,7 +63,7 @@ export function createDryRunUI({ api, escape, formatTime, generation, authentica
       const error = values.outcome === 'error';
       fields = `<div class="wf-dry-http-fields"><label class="field">호출 결과<select data-dry-field="outcome"><option value="response" ${!error ? 'selected' : ''}>HTTP 응답</option><option value="error" ${error ? 'selected' : ''}>통신 오류</option></select></label><label class="field" data-dry-response ${error ? 'hidden' : ''}>HTTP 상태 코드<input data-dry-field="status" value="${escape(values.status)}" inputmode="numeric" maxlength="3"></label></div><div data-dry-response ${error ? 'hidden' : ''}>${area('응답 헤더 (JSON 객체)', 'headers', values.headers, DRY_RUN_LIMITS.headers)}${area('응답 본문 (JSON · 문자열은 따옴표로 감싸기)', 'body', values.body)}</div><label class="field" data-dry-failure ${!error ? 'hidden' : ''}>통신 오류 메시지<input data-dry-field="error" maxlength="2000" value="${escape(values.error)}"></label>`;
     } else {
-      const hint = { datetime: '입력한 테스트 기준 시각과 노드 설정으로 날짜·시각을 계산합니다.', context: '노드에 설정된 키·값을 실행 컨텍스트에 주입합니다.', condition: '앞선 노드의 테스트 결과로 조건 분기를 판단합니다.', find: '앞선 노드의 테스트 결과에서 목록을 검색합니다.', finish: '노드에 설정된 종료 결과와 사유를 사용합니다.' }[node.type];
+      const hint = { datetime: '입력한 테스트 기준 시각과 노드 설정으로 날짜·시각을 계산합니다.', context: '노드에 설정된 키·값을 실행 컨텍스트에 주입합니다.', condition: '앞선 노드의 테스트 결과로 조건 분기를 판단합니다.', switch: '비교 값에 일치하는 분기 하나로 진행하며, 일치하지 않거나 값이 없으면 기본 경로로 진행합니다.', find: '앞선 노드의 테스트 결과에서 목록을 검색합니다.', finish: '노드에 설정된 종료 결과와 사유를 사용합니다.' }[node.type];
       fields = `<p class="form-hint">${hint}</p>`;
     }
     return `<details class="wf-dry-node" data-dry-node="${escape(node.id)}" ${values ? 'open' : ''}><summary><strong>${escape(node.name)}</strong><span>${escape(types[node.type].label)}</span></summary><div class="wf-dry-node-body">${fields}</div></details>`;
@@ -73,7 +73,7 @@ export function createDryRunUI({ api, escape, formatTime, generation, authentica
     saveStatus(item);
   }
   function resultMarkup(result) {
-    return `<h3>Dry-Run 결과 · <span class="wf-dry-status ${escape(result.status)}">${escape(statusNames[result.status])}</span></h3><p class="form-hint">${result.steps.length}개 노드 실행 · ${result.skipped.length}개 노드 미실행</p>${result.message ? `<p>${escape(result.message)}</p>` : ''}<ol class="wf-dry-steps">${result.steps.map(step => `<li><details ${step.status === 'failure' || step.status === 'review' ? 'open' : ''}><summary><strong>${escape(step.name)}</strong> · <span class="wf-dry-status ${escape(step.status)}">${escape(statusNames[step.status])}</span> <span class="form-hint">${escape(step.port)}${step.attempts ? ` · 모의 시도 ${step.attempts}회` : ''}</span></summary>${step.error ? `<p class="form-error">${escape(step.error)}</p>` : ''}${step.request ? `<h4>요청 미리보기</h4>${json(step.request)}` : ''}${step.output === undefined ? '' : `<h4>노드 출력</h4>${json(step.output)}`}</details></li>`).join('')}</ol>${result.skipped.length ? `<details><summary>실행하지 않은 노드</summary><p>${result.skipped.map(node => escape(node.name)).join(', ')}</p></details>` : ''}<details><summary>최종 실행 컨텍스트</summary>${json(result.context)}</details>`;
+    return `<h3>Dry-Run 결과 · <span class="wf-dry-status ${escape(result.status)}">${escape(statusNames[result.status])}</span></h3><p class="form-hint">${result.steps.length}개 노드 실행 · ${result.skipped.length}개 노드 미실행</p>${result.message ? `<p>${escape(result.message)}</p>` : ''}<ol class="wf-dry-steps">${result.steps.map(step => `<li><details ${step.status === 'failure' || step.status === 'review' ? 'open' : ''}><summary><strong>${escape(step.name)}</strong> · <span class="wf-dry-status ${escape(step.status)}">${escape(statusNames[step.status])}</span> <span class="form-hint">${escape(step.type === 'switch' ? switchLabel(record.definition.nodes.find(node => node.id === step.nodeId), step.port) : step.port)}${step.attempts ? ` · 모의 시도 ${step.attempts}회` : ''}</span></summary>${step.error ? `<p class="form-error">${escape(step.error)}</p>` : ''}${step.request ? `<h4>요청 미리보기</h4>${json(step.request)}` : ''}${step.output === undefined ? '' : `<h4>노드 출력</h4>${json(step.output)}`}</details></li>`).join('')}</ol>${result.skipped.length ? `<details><summary>실행하지 않은 노드</summary><p>${result.skipped.map(node => escape(node.name)).join(', ')}</p></details>` : ''}<details><summary>최종 실행 컨텍스트</summary>${json(result.context)}</details>`;
   }
   async function closeAfterSave() {
     const item = record;

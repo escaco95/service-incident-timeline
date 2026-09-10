@@ -37,7 +37,8 @@ test('context entries validate strictly, remain literal and round-trip in workfl
   const values = { token: 'sample-token', empty: '', text: '"quoted"\n한글', literal: '{{secrets.NOT_A_REFERENCE}}' };
   const definition = chain([root(), inject('values', values), done()]);
   const exported = exportWorkflow(definition);
-  assert.deepEqual(exported.requiredSecrets, []);
+  assert.equal(Object.hasOwn(exported, 'requiredSecrets'), false);
+  assert.deepEqual(importWorkflow(exported).requiredSecrets, []);
   assert.deepEqual(importWorkflow(exported, { executable: true }).definition, validateDefinition(definition));
   const entries = Array.from({ length: 50 }, (_, i) => ({ key: 'key' + i, value: 'v'.repeat(4000) }));
   assert.equal(validateDefinition(chain([root(), node('values', 'context', { entries }), done()])).nodes[1].config.entries.length, 50);

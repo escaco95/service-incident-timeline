@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GRID, CANVAS_SIZE, NODE_WIDTH, NODE_HEIGHT, NODE_BOUNDS, nodePosition, arrangeNodes, newNodePosition, fitNodesToCanvas, capCameraPan } from '../public/workflow-layout.js';
+import { GRID, CANVAS_SIZE, NODE_WIDTH, NODE_HEIGHT, NODE_BOUNDS, nodeHeight, nodeBounds, outputPosition, nodePosition, arrangeNodes, newNodePosition, fitNodesToCanvas, capCameraPan } from '../public/workflow-layout.js';
 
 test('camera center stays within the canvas at every zoom and viewport size, without snapping', () => {
   for (const zoom of [.35, .85, 1, 1.5]) for (const [width, height] of [[300, 600], [920, 800], [6000, 4000]]) {
@@ -18,9 +18,9 @@ function check(nodes) {
   for (const node of nodes) {
     assert.equal(node.x % GRID, 0); assert.equal(node.y % GRID, 0);
     assert.ok(node.x >= NODE_BOUNDS.minX && node.x <= NODE_BOUNDS.maxX);
-    assert.ok(node.y >= NODE_BOUNDS.minY && node.y <= NODE_BOUNDS.maxY);
-    assert.ok(node.x + NODE_WIDTH < CANVAS_SIZE && node.y + NODE_HEIGHT + 32 < CANVAS_SIZE);
-    for (const other of nodes) if (other !== node) assert.ok(node.x + NODE_WIDTH <= other.x || other.x + NODE_WIDTH <= node.x || node.y + NODE_HEIGHT + 32 <= other.y || other.y + NODE_HEIGHT + 32 <= node.y, `Overlapping nodes ${node.id}, ${other.id}`);
+    assert.ok(node.y >= NODE_BOUNDS.minY && node.y <= nodeBounds(node).maxY);
+    assert.ok(node.x + NODE_WIDTH < CANVAS_SIZE && node.y + nodeHeight(node) + 32 < CANVAS_SIZE);
+    for (const other of nodes) if (other !== node) assert.ok(node.x + NODE_WIDTH <= other.x || other.x + NODE_WIDTH <= node.x || node.y + nodeHeight(node) + 32 <= other.y || other.y + nodeHeight(other) + 32 <= node.y, `Overlapping nodes ${node.id}, ${other.id}`);
   }
 }
 test('canvas ends at the nearest dot to 5000 and keeps entire nodes inside all four edges', () => {
@@ -46,4 +46,26 @@ test('arrangement wraps long chains and wide branches within the canvas, includi
   }
   const nodes = [{ id: 'root', x: 72, y: 36 }, { id: 'child', x: 468, y: 252 }], original = structuredClone(nodes);
   fitNodesToCanvas(nodes, [{ from: 'root', to: 'child' }]); assert.deepEqual(nodes, original);
+});
+
+test('tall switch nodes, their output ports and 100-node arrangements fit without overlapping', () => {
+  const cases = Array.from({ length:20 }, (_, i) => ({ id:'case-' + i, value:i }));
+  const sample = { type:'switch', config:{ cases } };
+  const bottom = { id:'bottom', ...sample, ...nodePosition(5000, 5000, sample) };
+  check([bottom]);
+  const outputs = [...cases.map(entry => outputPosition(bottom, entry.id)), outputPosition(bottom, 'default')];
+  for (let i = 0; i < outputs.length; i++) {
+    assert.equal(outputs[i].x, NODE_WIDTH); assert.ok(outputs[i].y < nodeHeight(bottom));
+    if (i) assert.ok(outputs[i].y - outputs[i-1].y >= 28);
+  }
+  for (const allTall of [true, false]) {
+    const nodes = [];
+    for (let i = 0; i < 100; i++) {
+      const node = { id:'n' + i, ...(allTall || i % 3 === 0 ? sample : {}) };
+      nodes.push({ ...node, ...newNodePosition(nodes, node) });
+    }
+    check(nodes);
+    const edges = nodes.slice(1).map((node, i) => ({ from:nodes[i].id, to:node.id }));
+    arrangeNodes(nodes, edges); check(nodes);
+  }
 });

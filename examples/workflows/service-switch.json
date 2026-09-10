@@ -1,0 +1,23 @@
+{
+  "format": "service-incident-timeline/workflow",
+  "formatVersion": 1,
+  "definition": {
+    "name": "서비스별 switch 분기 예제",
+    "nodes": [
+      { "id": "changed", "type": "service-state", "name": "서비스 상태 변경", "config": { "service": "" } },
+      { "id": "route", "type": "switch", "name": "서비스별 분기", "config": { "field": "trigger.service", "cases": [
+        { "id": "case-a", "value": "A" },
+        { "id": "case-b", "value": "B" }
+      ] } },
+      { "id": "service-a", "type": "finish", "name": "A 서비스 처리", "config": { "result": "success", "message": "A 서비스 경로" } },
+      { "id": "service-b", "type": "finish", "name": "B 서비스 처리", "config": { "result": "success", "message": "B 서비스 경로" } },
+      { "id": "other", "type": "finish", "name": "그 외 서비스", "config": { "result": "skipped", "message": "처리 대상이 아닌 서비스" } }
+    ],
+    "edges": [
+      { "id": "changed-route", "from": "changed", "to": "route", "port": "next" },
+      { "id": "route-a", "from": "route", "to": "service-a", "port": "case-a" },
+      { "id": "route-b", "from": "route", "to": "service-b", "port": "case-b" },
+      { "id": "route-other", "from": "route", "to": "other", "port": "default" }
+    ]
+  }
+}

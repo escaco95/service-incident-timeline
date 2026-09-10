@@ -19,7 +19,7 @@ export function createWorkflowFiles({ api, escape, generation, active, current, 
         const result = await api('/api/workflows/validate', { method: 'POST', body: JSON.stringify(input) });
         if (session !== generation() || token !== revision || !dialog.open || !active()) return;
         parsed = result.definition;
-        dialog.querySelector('[data-file-summary]').textContent = `${parsed.name} · ${parsed.nodes.length}개 노드 · ${parsed.edges.length}개 연결 · ${result.executable ? '구성 검증 통과' : '실행 전 수정 필요: ' + result.executableError} · 필요한 비밀 변수: ${result.requiredSecrets.join(', ') || '없음'}`;
+        dialog.querySelector('[data-file-summary]').textContent = `${parsed.name} · ${parsed.nodes.length}개 노드 · ${parsed.edges.length}개 연결 · ${result.executable ? '구성 검증 통과' : '실행 전 수정 필요: ' + result.executableError}${result.requiredSecrets.length ? ' · 필요한 기존 비밀 변수: ' + result.requiredSecrets.join(', ') : ''}`;
         dialog.querySelector('[data-file-preview]').innerHTML = `${flow ? `<details><summary>현재 편집 정의</summary><pre>${escape(JSON.stringify({ name: flow.name, nodes: flow.nodes, edges: flow.edges }, null, 2))}</pre></details>` : ''}<details open><summary>가져올 정의</summary><pre>${escape(JSON.stringify(parsed, null, 2))}</pre></details>`;
         button.disabled = false;
       } catch (failure) { if (session === generation() && token === revision && dialog.open) error(failure.message); }
