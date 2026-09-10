@@ -301,6 +301,34 @@ async function checkOverflowTimeFills(date, expected) {
   }
 }
 
+async function checkExternalLinkGate(capture) {
+  const link = `document.querySelector('#auth-password-notice a')`;
+  const href = await evaluate(`${link}.href`);
+  await evaluate('window.originalLinkOpen = window.open; window.openCalls = []; window.open = (...args) => { window.openCalls.push(args); return null; };');
+  try {
+    await click(link);
+    assert.ok(await evaluate('document.querySelector("#external-link-dialog").open'), 'external links open the gate before leaving');
+    assert.equal(await evaluate('document.querySelector("#external-link-url").textContent'), href);
+    if (capture) await screenshot('external-link-gate-mobile');
+    await click(`document.querySelector('#external-link-dialog .dialog-actions .secondary')`);
+    // Chromium dispatches close asynchronously after the click task.
+    await waitFor(`!document.querySelector('#external-link-dialog').open && document.activeElement === ${link}`, 'cancelling returns focus to the link');
+    assert.equal(await evaluate('window.openCalls.length'), 0, 'cancelling must not navigate');
+    await evaluate(`${link}.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true, cancelable: true }))`);
+    assert.ok(await evaluate('document.querySelector("#external-link-dialog").open'), 'middle clicks reach the same gate');
+    await pressKey('Escape', 27);
+    await waitFor(`!document.querySelector('#external-link-dialog').open && document.activeElement === ${link}`, 'Escape closes the gate');
+    assert.equal(await evaluate('window.openCalls.length'), 0);
+    await click(link);
+    await click(`document.querySelector('#external-link-confirm')`);
+    assert.deepEqual(await evaluate('window.openCalls'), [[href, '_blank', 'noopener,noreferrer']]);
+    assert.equal(await evaluate('document.querySelector("#external-link-dialog").open'), false);
+    assert.ok(await evaluate('document.querySelector("#toast").hidden'), 'opening a new window raises no error notice');
+  } finally {
+    await evaluate('window.open = window.originalLinkOpen; delete window.originalLinkOpen; delete window.openCalls;');
+  }
+}
+
 try {
   let port;
   await until(async () => {
@@ -1205,19 +1233,31 @@ try {
   await waitFor('!!document.querySelector(".calendar")', 'login again');
   // Save through the settings UI, then verify the public notice after logout and reload.
   const noticeCases = [
-    { value: '  비밀번호는 운영 담당자에게 문의해 주세요.\n<img src=x onerror="window.noticeXss=true">  ', link: false },
-    { value: 'https://support.example/password?note="<ops>"&team=help', link: true },
-    { value: 'http://support.example/' + 'guide'.repeat(100), link: true },
-    { value: 'javascript:window.noticeXss=true', link: false },
-    { value: 'https://', link: false },
-    { value: 'https://support.example/ 안내를 확인하세요.', link: false },
-    { value: ' \n ', link: false }
+    { value: '  비밀번호는 운영 담당자에게 문의해 주세요.\n<img src=x onerror="window.noticeXss=true">  ', urls: [] },
+    { value: 'https://support.example/password?note="<ops>"&team=help', urls: ['https://support.example/password?note="<ops>"&team=help'] },
+    { value: 'http://support.example/' + 'guide'.repeat(100), urls: ['http://support.example/' + 'guide'.repeat(100)] },
+    { value: 'javascript:window.noticeXss=true', urls: [] },
+    { value: 'https://', urls: [] },
+    { value: 'https://support.example/ 안내를 확인하세요.', urls: ['https://support.example/'] },
+    { value: '문서1: https://www.example.com (참고문서)\n신청기안: https://www.example2.com (기안)', urls: ['https://www.example.com', 'https://www.example2.com'] },
+    { value: '자세한 내용은 https://a.example. 등을 보세요.', urls: ['https://a.example'] },
+    { value: 'https://example.com/wiki/Function_(mathematics)', urls: ['https://example.com/wiki/Function_(mathematics)'] },
+    { value: '참고: (https://example.com/wiki/Function_(mathematics)).', urls: ['https://example.com/wiki/Function_(mathematics)'] },
+    { value: '문서: [https://example.com/docs], {https://example.com/guide}.', urls: ['https://example.com/docs', 'https://example.com/guide'] },
+    { value: ' \n ', urls: [] }
   ];
-  for (const [index, { value, link }] of noticeCases.entries()) {
+  for (const [index, { value, urls }] of noticeCases.entries()) {
+    const anchors = urls.length;
+    const previous = index ? noticeCases[index - 1] : { value: '', urls: [] };
     await click(`document.querySelector('[data-action="branding-settings"]')`);
     await waitFor('!document.querySelector("#branding-fields").disabled', 'password notice settings loaded');
-    assert.equal(await evaluate('document.querySelector("#branding-form").elements.passwordNotice.value'), index ? noticeCases[index - 1].value.trim() : '');
-    await evaluate(`(() => { const form = document.querySelector('#branding-form'); form.elements.passwordNotice.value = ${JSON.stringify(value)}; form.requestSubmit(); })()`);
+    assert.equal(await evaluate('document.querySelector("#branding-form").elements.passwordNotice.value'), previous.value.trim());
+    assert.equal(await evaluate('document.querySelector("#branding-notice-preview").hidden'), !previous.value.trim(), 'the settings preview follows the loaded value');
+    assert.equal(await evaluate('document.querySelectorAll("#branding-notice-preview-content a").length'), previous.urls.length);
+    await evaluate(`(() => { const input = document.querySelector('#branding-form').elements.passwordNotice; input.value = ${JSON.stringify(value)}; input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    assert.equal(await evaluate('document.querySelector("#branding-notice-preview").hidden'), !value.trim(), 'an empty notice hides the settings preview');
+    assert.equal(await evaluate('document.querySelectorAll("#branding-notice-preview-content a").length'), anchors, 'the settings preview follows edits');
+    await evaluate(`document.querySelector('#branding-form').requestSubmit()`);
     await waitFor('!document.querySelector("#branding-dialog").open', 'password notice saved');
     assert.equal(JSON.parse(await fs.readFile(brandingFile, 'utf8')).passwordNotice, value.trim());
     await click(`document.querySelector('[data-action="logout"]')`);
@@ -1228,30 +1268,30 @@ try {
     await waitFor('!window.noticeReloadPending && !!document.querySelector("#auth-form")', 'public password notice after reload');
     const rendered = await evaluate(`(() => {
       const notice = document.querySelector('#auth-password-notice');
-      const anchor = notice?.querySelector('a');
-      return { visible: !!notice, text: notice?.textContent ?? '', href: anchor?.href, target: anchor?.target, rel: anchor?.rel,
+      const links = [...(notice?.querySelectorAll('a') ?? [])];
+      return { visible: !!notice, text: notice?.textContent ?? '', hrefs: links.map(link => link.href),
+        targets: [...new Set(links.map(link => link.target))], rels: [...new Set(links.map(link => link.rel))],
         children: notice?.children.length ?? 0, whiteSpace: notice && getComputedStyle(notice).whiteSpace,
         describedBy: document.querySelector('#auth-form').elements.password.getAttribute('aria-describedby'),
         overflow: document.documentElement.scrollWidth > innerWidth, xss: !!window.noticeXss };
     })()`);
     assert.equal(rendered.visible, !!value.trim());
-    assert.equal(rendered.text, value.trim());
-    assert.equal(rendered.children, link ? 1 : 0, 'notice HTML must remain text');
+    assert.equal(rendered.text, value.trim(), 'the notice keeps the stored text and line breaks');
+    assert.equal(rendered.children, anchors, 'notice HTML must remain text');
     assert.equal(rendered.xss, false);
     assert.equal(rendered.overflow, false, 'long notices and URLs fit the mobile login screen');
     assert.equal(rendered.describedBy, value.trim() ? 'auth-password-notice' : null);
     if (value.trim()) assert.equal(rendered.whiteSpace, 'pre-wrap');
-    if (link) {
-      assert.equal(rendered.href, new URL(value).href);
-      assert.equal(rendered.target, '_blank');
-      assert.equal(rendered.rel, 'noopener noreferrer');
-    }
-    if (index < 2) await screenshot(`password-notice-${link ? 'link' : 'text'}-mobile`);
+    assert.deepEqual(rendered.hrefs, urls.map(url => new URL(url).href));
+    assert.deepEqual(rendered.targets, anchors ? ['_blank'] : []);
+    assert.deepEqual(rendered.rels, anchors ? ['noopener noreferrer'] : []);
+    if (index < 2) await screenshot(`password-notice-${anchors ? 'link' : 'text'}-mobile`);
+    if (anchors) await checkExternalLinkGate(index === 1);
     await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(password)}; form.requestSubmit(); })()`);
     await waitFor('!!document.querySelector(".calendar")', 'login after password notice check');
   }
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('Browser checks passed: user menu and keyboard focus, persistent connection error and recovery, retry deduplication, stacked mobile notifications, responsive header, branding, theme persistence, setup, session, calendar popups, timeline navigation, manual CRUD, service catalog settings, policy-free event forms, change and workflow audit records, mobile layout, XSS rendering, logout and login.');
+  console.log('Browser checks passed: user menu and keyboard focus, persistent connection error and recovery, retry deduplication, stacked mobile notifications, responsive header, branding, theme persistence, setup, session, calendar popups, timeline navigation, manual CRUD, service catalog settings, policy-free event forms, change and workflow audit records, mobile layout, XSS rendering, password notice links and the external link gate, logout and login.');
   console.log(`Screenshots: ${output}`);
 } catch (error) {
   if (socket?.readyState === WebSocket.OPEN) await screenshot('failure').catch(() => {});

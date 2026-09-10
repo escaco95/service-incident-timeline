@@ -81,7 +81,8 @@
               <label class="field" id="branding-custom-timezone" hidden>시간대 직접 입력<input name="customTimezone" maxlength="100" autocomplete="off" spellcheck="false" placeholder="예: Australia/Sydney" disabled></label>
               <p class="form-hint">기본 테마는 개인 테마를 선택하지 않은 사용자에게 적용됩니다. 시간대를 바꾸면 이벤트의 표시·입력 시각도 함께 바뀝니다.</p>
               <label class="field">비밀번호 안내문 <span class="optional">선택</span><textarea name="passwordNotice" rows="3" maxlength="2000" aria-describedby="password-notice-hint" placeholder="예: 비밀번호는 운영 담당자에게 문의해 주세요."></textarea></label>
-              <p id="password-notice-hint" class="form-hint">로그인 화면에 표시됩니다. http:// 또는 https:// URL만 입력하면 새 탭에서 열리는 링크로 표시되며, 비워 두면 숨겨집니다.</p>
+              <p id="password-notice-hint" class="form-hint">로그인 화면에 표시됩니다. 문장 속 http:// 또는 https:// URL은 새 탭에서 열리는 링크가 되고 이동 전에 확인 팝업을 띄우며, 비워 두면 숨겨집니다.</p>
+              <div id="branding-notice-preview" hidden><p class="auth-preview-label">로그인 화면 미리보기</p><div id="branding-notice-preview-content"></div></div>
             </fieldset>
             <p id="branding-error" class="form-error" role="alert" hidden></p>
             <button type="button" id="branding-reload" class="button secondary" hidden>최신 설정 불러오기</button>
@@ -140,6 +141,13 @@
     <p id="delete-description" class="delete-description"></p><p class="muted">삭제한 이벤트는 화면에서 복구할 수 없습니다.</p>
     <p class="form-error" id="delete-error" role="alert" hidden></p>
     <div class="dialog-actions"><button class="button secondary" data-close="delete-dialog">취소</button><button class="button danger" id="delete-confirm">이벤트 삭제</button></div>
+  </dialog>
+  <!-- app.js binds backdrop dismissal only to dialogs present during startup. -->
+  <dialog id="external-link-dialog" class="dialog external-link-dialog" aria-labelledby="external-link-title" aria-describedby="external-link-description">
+    <div class="dialog-heading"><h2 id="external-link-title">외부 사이트로 이동합니다</h2><button type="button" class="icon-button" data-close="external-link-dialog" aria-label="닫기"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 5 14 14M19 5 5 19"/></svg></button></div>
+    <p id="external-link-url" class="external-link-url"></p>
+    <p id="external-link-description" class="muted external-link-description">이 서비스가 관리하지 않는 외부 사이트입니다. 주소를 확인한 뒤 이동해 주세요.</p>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close="external-link-dialog" autofocus>취소</button><button type="button" class="button primary" id="external-link-confirm">이동</button></div>
   </dialog>
   <noscript>이 서비스는 JavaScript가 활성화된 브라우저에서 사용할 수 있습니다.</noscript>
 </body>

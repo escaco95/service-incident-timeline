@@ -2088,6 +2088,23 @@ svg.icon {
   line-height:1.7
 }
 
+.external-link-dialog {
+  max-width:470px
+}
+
+.external-link-url {
+  margin:0;
+  font-size:13px;
+  font-weight:600;
+  overflow-wrap:anywhere
+}
+
+.external-link-description {
+  margin:12px 0 0;
+  font-size:12px;
+  line-height:1.7
+}
+
 .service-picker {
   border:1px solid var(--line);
   border-radius:9px;

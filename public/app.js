@@ -6,6 +6,7 @@ import { createDangerZoneUI } from './danger-zone-ui.js';
 import { createDataTransferUI } from './data-transfer-ui.js';
 import { createAuditUI } from './audit-ui.js';
 import { createWorkflowUI } from './workflow-ui.js';
+import { createExternalLinkUI } from './external-link-ui.js';
 
 let timezone = 'UTC';
 let { dateParts, dateKey, calendarDate, startOfDay, addDays, fromDateKey, dayBounds, overlaps, onDay, timeLabel, dateTimeInput, parseDateTimeInput, formatDay, formatDateTime, weekSegments, daySegment } = createDateUtils(timezone);
@@ -98,6 +99,7 @@ const logPolicyUI = createLogPolicyUI({ api, generation: () => sessionGeneration
 let pendingAuditEvent;
 const auditUI = createAuditUI({ api, escape, icon, generation: () => sessionGeneration, authenticated: () => state.authenticated, active: () => state.view === 'audit', today: () => dateKey(new Date()), dateBoundary: value => startOfDay(value).toISOString(), formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()), events: () => state.events, openEvent: id => openDetail(id) });
 const workflowUI = createWorkflowUI({ api, authenticated: () => state.authenticated, generation: () => sessionGeneration, active: () => state.view === 'workflow', openRuns: (id, runId) => { state.view = 'audit'; renderApp(); auditUI.openWorkflow(id, runId); }, escape, toast, formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()) });
+createExternalLinkUI({ toast });
 const dangerZoneUI = createDangerZoneUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, onSavingChange: setSettingsBusy, toast, onReset: applyDataReset });
 const dataTransferUI = createDataTransferUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, confirmRestore: (job, onStarted) => dangerZoneUI.restore(job, onStarted), onRestored: applyDataReset, toast });
 async function applyDataReset(result) {
@@ -181,6 +183,7 @@ function openBrandingSettings() {
   logPolicySettingsLoaded = false;
   selectSettingsGroup('branding');
   $('#branding-form').reset();
+  updateBrandingNoticePreview();
   updateCustomTimezone();
   brandingVersion = null;
   $('#branding-dialog').showModal();
@@ -206,6 +209,8 @@ async function loadBrandingSettings() {
     form.elements.customTimezone.value = preset ? '' : selectedTimezone;
     updateCustomTimezone();
     form.elements.showSubtitle.checked = result.branding.showSubtitle;
+    // Programmatic form updates do not emit input events.
+    updateBrandingNoticePreview();
     brandingVersion = result.version;
     $('#branding-fields').disabled = false;
     $('#branding-save').disabled = false;
@@ -336,20 +341,54 @@ function updateConnectionNotice() {
   }
 }
 
+const CLOSING_PAIRS = { ')': '(', ']': '[', '}': '{' };
+const occurrences = (text, character) => text.split(character).length - 1;
+
+// Sentence punctuation is excluded, but balanced brackets can belong to the URL.
+function splitNoticeUrl(match) {
+  let url = match;
+  while (/[.,;:!?)\]}'"`]$/.test(url)) {
+    const last = url.at(-1);
+    if (CLOSING_PAIRS[last] && occurrences(url, CLOSING_PAIRS[last]) >= occurrences(url, last)) break;
+    url = url.slice(0, -1);
+  }
+  return [url, match.slice(url.length)];
+}
+
+function noticeFragment(match) {
+  const [candidate, trailing] = splitNoticeUrl(match);
+  try {
+    const url = new URL(candidate);
+    if (['http:', 'https:'].includes(url.protocol)) {
+      return `<a href="${escape(url.href)}" target="_blank" rel="noopener noreferrer">${escape(candidate)}</a>${escape(trailing)}`;
+    }
+  } catch { /* Invalid URLs remain plain text. */ }
+  return escape(match);
+}
+
 function passwordNotice(value = branding.passwordNotice) {
   const notice = (value ?? '').trim();
   if (!notice) return '';
-  let content = escape(notice);
-  if (/^https?:\/\/\S+$/i.test(notice)) {
-    try {
-      const url = new URL(notice);
-      if (['http:', 'https:'].includes(url.protocol)) {
-        content = `<a href="${escape(url.href)}" target="_blank" rel="noopener noreferrer">${content}</a>`;
-      }
-    } catch { /* Invalid URLs remain plain text. */ }
+  let content = '';
+  let index = 0;
+  for (const match of notice.matchAll(/https?:\/\/\S+/gi)) {
+    content += escape(notice.slice(index, match.index)) + noticeFragment(match[0]);
+    index = match.index + match[0].length;
   }
+  content += escape(notice.slice(index));
   return `<p id="auth-password-notice" class="auth-password-notice">${content}</p>`;
 }
+
+function bindNoticePreview(input, container, content) {
+  const update = () => {
+    container.hidden = !input.value.trim();
+    content.innerHTML = passwordNotice(input.value);
+  };
+  input.addEventListener('input', update);
+  return update;
+}
+
+const updateBrandingNoticePreview = bindNoticePreview($('#branding-form').elements.passwordNotice, $('#branding-notice-preview'), $('#branding-notice-preview-content'));
 
 function renderAuth() {
   const setup = !state.initialized;
@@ -361,22 +400,14 @@ function renderAuth() {
       <form id="auth-form"><label class="field">암호화 비밀번호<div class="password-wrap"><input name="password" type="password" required minlength="12" maxlength="256"${!setup && branding.passwordNotice ? ' aria-describedby="auth-password-notice"' : ''} autocomplete="${setup ? 'new-password' : 'current-password'}" placeholder="${setup ? '12자 이상의 비밀번호' : '비밀번호 입력'}"><button type="button" class="password-toggle" data-action="password-toggle" aria-label="비밀번호 표시" aria-pressed="false">${icon('eye')}</button></div></label>
       ${setup ? `<label class="field">비밀번호 확인<input name="confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="비밀번호를 한 번 더 입력해 주세요"></label>
         <div class="auth-setup-notice"><label class="field">비밀번호 안내문 <span class="optional">선택</span><textarea name="passwordNotice" rows="3" maxlength="2000" aria-describedby="setup-notice-hint" placeholder="예: 비밀번호는 운영 담당자에게 문의해 주세요.">${escape(branding.passwordNotice)}</textarea></label>
-          <p id="setup-notice-hint" class="form-hint">로그인 화면에 표시할 문장이나 URL을 입력하세요. http:// 또는 https:// URL은 새 탭에서 열립니다. 비워 두어도 시작할 수 있으며, 나중에 시스템 설정에서 수정할 수 있습니다.</p>
+          <p id="setup-notice-hint" class="form-hint">로그인 화면에 표시할 문장이나 URL을 입력하세요. 문장 속 http:// 또는 https:// URL은 새 탭에서 열리는 링크가 되고 이동 전에 확인 팝업을 띄웁니다. 비워 두어도 시작할 수 있으며, 나중에 시스템 설정에서 수정할 수 있습니다.</p>
           <div id="setup-notice-preview" hidden><p class="auth-preview-label">로그인 화면 미리보기</p><div id="setup-notice-preview-content"></div></div>
         </div>` : ''}
       <p id="auth-error" class="form-error" role="alert" hidden></p><button class="button primary auth-submit" type="submit">${icon(setup ? 'shield' : 'lock')}${setup ? '설정 저장하고 시작' : '로그인'}</button></form>
       <p class="auth-notice">${icon('shield')}<span>${setup ? '비밀번호는 저장되지 않습니다. 분실하면 기존 데이터를 복구할 수 없으니 안전한 곳에 보관해 주세요.' : '복호화 키는 서버 메모리에만 유지됩니다. 서버가 재시작되면 비밀번호를 다시 입력해야 합니다.'}</span></p>
     </section></main><footer class="auth-footer">${escape(branding.name)}</footer></div>`;
   $('#auth-form').addEventListener('submit', signIn);
-  if (setup) {
-    const input = $('#auth-form').elements.passwordNotice;
-    const updatePreview = () => {
-      $('#setup-notice-preview').hidden = !input.value.trim();
-      $('#setup-notice-preview-content').innerHTML = passwordNotice(input.value);
-    };
-    input.addEventListener('input', updatePreview);
-    updatePreview();
-  }
+  if (setup) bindNoticePreview($('#auth-form').elements.passwordNotice, $('#setup-notice-preview'), $('#setup-notice-preview-content'))();
 }
 
 async function signIn(event) {
@@ -433,6 +464,7 @@ function endSession() {
   brandingRequest += 1;
   brandingVersion = null;
   $('#branding-form').reset();
+  updateBrandingNoticePreview();
   $('#branding-fields').disabled = true;
   state.authenticated = false;
   state.events = [];

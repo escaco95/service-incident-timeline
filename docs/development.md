@@ -52,7 +52,7 @@ node --test test/*.test.mjs
 
 | 명령 | 검증 범위 |
 | --- | --- |
-| `node scripts/browser-check.mjs` | 캘린더·타임라인·수기 편집·설정·감사 조회·모바일·XSS 렌더링·세션 |
+| `node scripts/browser-check.mjs` | 캘린더·타임라인·수기 편집·설정·감사 조회·모바일·XSS 렌더링·안내문 링크와 외부 이동 확인·세션 |
 | `node scripts/http-browser-check.mjs` | 브라우저 내부에서 `navix.test`를 로컬 서버로 연결한 일반 HTTP 환경. `--localhost`로 로컬 주소 비교 |
 | `node scripts/workflow-browser-check.mjs` | 워크플로우 파일 교환·편집·저장·실행·Dry-Run·보류·재평가 |
 | `node scripts/danger-zone-browser-check.mjs` | 부분·전체 초기화 확인과 취소 |

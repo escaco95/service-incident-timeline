@@ -28,6 +28,7 @@ const ASSETS = new Map([
   ['/data-transfer-ui.js', ['data-transfer-ui.js', 'text/javascript; charset=utf-8']],
   ['/audit-ui.js', ['audit-ui.js', 'text/javascript; charset=utf-8']],
   ['/event-loader.js', ['event-loader.js', 'text/javascript; charset=utf-8']],
+  ['/external-link-ui.js', ['external-link-ui.js', 'text/javascript; charset=utf-8']],
   ['/audit.css', ['audit.css', 'text/css; charset=utf-8']],
   ['/workflow-spec.js', ['workflow-spec.js', 'text/javascript; charset=utf-8']],
   ['/workflow-file-ui.js', ['workflow-file-ui.js', 'text/javascript; charset=utf-8']],
