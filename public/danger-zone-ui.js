@@ -1,3 +1,4 @@
+import { randomUUID } from './random-id.js';
 const TARGETS = {
   audit: { name: '감사 로그 초기화', description: '모든 변경 기록과 워크플로우 실행 이력을 삭제합니다. 대기·실행 중인 워크플로우도 중지합니다. 이벤트와 워크플로우 구성은 유지합니다.' },
   events: { name: '이벤트 초기화', description: '종료 미정·예정 이벤트를 포함한 모든 이벤트를 삭제합니다. 서비스 제안 목록, 워크플로우와 기존 감사 기록은 유지합니다. 이미 접수한 실행은 당시 입력으로 계속 진행합니다.' },
@@ -22,7 +23,7 @@ export function createDangerZoneUI({ api, generation, authenticated, onSavingCha
   $('#danger-zone-actions').addEventListener('click', event => {
     const button = event.target.closest('[data-reset-target]');
     if (!button || saving || !authenticated()) return;
-    selected = { target: button.dataset.resetTarget, requestId: crypto.randomUUID(), session: generation() }; phase = 'confirm';
+    selected = { target: button.dataset.resetTarget, requestId: randomUUID(), session: generation() }; phase = 'confirm';
     const item = TARGETS[selected.target];
     $('#reset-confirm-title').textContent = item.name;
     $('#reset-confirm-description').textContent = item.description;
@@ -72,7 +73,7 @@ export function createDangerZoneUI({ api, generation, authenticated, onSavingCha
   return {
     restore(archive, onStarted) {
       if (saving || !authenticated()) return;
-      selected = { target: 'restore', archive, onStarted, requestId: crypto.randomUUID(), session: generation() }; phase = 'confirm';
+      selected = { target: 'restore', archive, onStarted, requestId: randomUUID(), session: generation() }; phase = 'confirm';
       $('#reset-confirm-title').textContent = '데이터 복원';
       $('#reset-confirm-description').textContent = `${archive.name}의 데이터로 현재 이벤트, 서비스, 워크플로우, 감사 로그와 설정을 모두 교체합니다. 현재 비밀번호는 유지합니다. 실행 중 작업을 중지하며 백업의 미완료 실행은 자동 재개하지 않습니다.`;
       confirmDialog.showModal();

@@ -1,3 +1,4 @@
+import { randomUUID } from './random-id.js';
 const $ = selector => document.querySelector(selector);
 
 export function createServicesUI({ api, escape, generation, authenticated, onChanged, onSavingChange }) {
@@ -69,7 +70,7 @@ export function createServicesUI({ api, escape, generation, authenticated, onCha
   function catalogRow(service, saved = false) {
     return `<div class="catalog-row" data-catalog-row data-service-id="${escape(service.id)}"><label class="field">표시명<input data-key="name" value="${escape(service.name)}" maxlength="80" required></label><label class="check-field"><input type="checkbox" data-key="active" ${service.active ? 'checked' : ''}>사용</label><div class="row-buttons"><button type="button" class="icon-button" data-move="up" aria-label="서비스 위로">↑</button><button type="button" class="icon-button" data-move="down" aria-label="서비스 아래로">↓</button>${saved ? '' : '<button type="button" class="icon-button" data-remove-row aria-label="새 서비스 제거">×</button>'}</div></div>`;
   }
-  $('#catalog-add').addEventListener('click', () => $('#services-catalog').insertAdjacentHTML('beforeend', catalogRow({ id: `service-${crypto.randomUUID()}`, name: '', active: true })));
+  $('#catalog-add').addEventListener('click', () => $('#services-catalog').insertAdjacentHTML('beforeend', catalogRow({ id: `service-${randomUUID()}`, name: '', active: true })));
   settingsForm.addEventListener('click', event => {
     const action = event.target.closest('[data-move],[data-remove-row]');
     if (!action) return;

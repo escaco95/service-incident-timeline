@@ -1,3 +1,4 @@
+import { randomUUID } from './random-id.js';
 import { LIMITS, ports as outputs, TRIGGERS } from './workflow-spec.js';
 import { createWorkflowFiles } from './workflow-file-ui.js';
 // Local editor drafts are separate from the saved definition used by the server.
@@ -149,7 +150,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
           finally { loading = false; if (session === generation() && runDialog.open && id === currentId) showPage(); }
         });
       }
-      const requestId = crypto.randomUUID();
+      const requestId = randomUUID();
       runDialog.querySelector('form').addEventListener('submit', async event => {
         event.preventDefault(); const form = event.currentTarget, button = form.querySelector('[type=submit]'); if (button.disabled) return;
         button.disabled = true;
@@ -379,7 +380,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
   function addNode(type) {
     if (current().nodes.length >= LIMITS.nodes) { toast('최대 100개 노드를 배치할 수 있습니다.'); return; }
     const count = current().nodes.length;
-    const node = makeNode(type, `node-${crypto.randomUUID()}`, 65 + (count % 2) * 360, count ? Math.max(...current().nodes.map(item => item.y)) + 202 : 36);
+    const node = makeNode(type, `node-${randomUUID()}`, 65 + (count % 2) * 360, count ? Math.max(...current().nodes.map(item => item.y)) + 202 : 36);
     current().nodes.push(node); current().selected = node.id; selectedEdge = null; connecting = null;
     refreshSelection();
     revealNode(node);
@@ -397,7 +398,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       seen.add(id); reachable.push(...current().edges.filter(edge => edge.from === id).map(edge => edge.to));
     }
     current().edges = current().edges.filter(edge => edge.from !== fromId || edge.port !== connecting.port);
-    current().edges.push({ id: `edge-${crypto.randomUUID()}`, ...connecting, to: toId });
+    current().edges.push({ id: `edge-${randomUUID()}`, ...connecting, to: toId });
     current().selected = toId; connecting = null; selectedEdge = null; refreshSelection();
   }
 
@@ -460,7 +461,7 @@ export function createWorkflowUI({ api, escape, toast, formatTime, dateSummary, 
       case 'download': files.download().catch(error => showError(error.message)); break;
       case 'services': files.services().catch(error => showError(error.message)); break;
       case 'new': {
-        createKey ??= crypto.randomUUID();
+        createKey ??= randomUUID();
         perform(async valid => { const flow = await api('/api/workflows', { method: 'POST', body: JSON.stringify({ requestId: createKey, name: '새 워크플로우' }) }); if (valid()) { createKey = null; accept(flow); currentId = flow.id; mountEditor(); startNameEdit(); } }); break;
       }
       case 'save': finishNameEdit(); perform(async valid => { const flow = current(); const updated = await api(`/api/workflows/${flow.id}`, { method: 'PUT', body: JSON.stringify({ ...definition(flow), version: flow.version, secrets: JSON.parse(flow.secretEdits || '{}') }) }); if (valid()) { accept(updated); mountEditor(); toast('워크플로우를 저장했습니다.'); } }); break;

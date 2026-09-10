@@ -222,6 +222,8 @@ node --test test/*.test.mjs
 
 ```sh
 node scripts/browser-check.mjs
+node scripts/http-browser-check.mjs
+node scripts/http-browser-check.mjs --localhost
 node scripts/workflow-browser-check.mjs
 node scripts/danger-zone-browser-check.mjs
 node scripts/setup-marker-browser-check.mjs
@@ -229,6 +231,8 @@ node scripts/data-transfer-browser-check.mjs
 ```
 
 Windows의 기본 Microsoft Edge 경로를 사용합니다. 다른 환경에서는 `BROWSER_PATH` 환경 변수에 Chrome/Chromium/Edge 실행 파일 경로를 지정하세요. 브라우저를 추가로 다운로드하지 않습니다. 테스트용 서버·프로필·암호화 파일을 임시 생성한 뒤 정리하며, 캡처는 `.tmp/screenshots/`에 남깁니다.
+
+`http-browser-check.mjs`는 브라우저 안에서 `navix.test`를 로컬 테스트 서버로 연결해 일반 HTTP 접속을 재현합니다. 빈 서비스 목록에서 추가·저장·새로고침과 워크플로우 생성·노드 연결·저장을 확인합니다. `--localhost`를 붙이면 브라우저가 신뢰하는 로컬 주소에서 같은 동작을 비교합니다.
 
 ## 파일 구성
 

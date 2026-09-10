@@ -1,3 +1,4 @@
+import { randomUUID } from './random-id.js';
 import { addDays, calendarDate, dateParts, fromDateKey } from './date-utils.js';
 
 const $ = selector => document.querySelector(selector);
@@ -283,7 +284,7 @@ export function createAuditUI({ api, escape, icon, generation, authenticated, ac
     if (action === 'reevaluate' && !confirm('현재 서비스 상태와 최신 정의로 새 실행을 접수합니다. 실제 API를 호출할 수 있습니다. 계속하시겠습니까?')) return;
     if (action === 'rerun' && !confirm('당시 구성과 입력으로 처음부터 다시 실행합니다. 앞서 성공한 API도 다시 호출할 수 있습니다. 계속하시겠습니까?')) return;
     const id = runId, session = generation(), key = `${id}:${action}`;
-    if (!runKeys.has(key)) runKeys.set(key, crypto.randomUUID());
+    if (!runKeys.has(key)) runKeys.set(key, randomUUID());
     runActionBusy = true; clearTimeout(runTimer);
     for (const button of detailDialog.querySelectorAll('[data-audit-run-action]')) button.disabled = true;
     try {

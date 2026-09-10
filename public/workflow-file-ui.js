@@ -1,10 +1,11 @@
+import { randomUUID } from './random-id.js';
 import { LIMITS } from './workflow-spec.js';
 
 export function createWorkflowFiles({ api, escape, generation, active, current, imported, toast }) {
   const dialog = document.createElement('dialog'); dialog.className = 'dialog'; dialog.id = 'workflow-file-dialog'; document.body.append(dialog);
   const error = message => { const target = dialog.querySelector('[data-file-error]'); if (target) { target.hidden = false; target.textContent = message; } };
   async function upload() {
-    const session = generation(), flow = current(), requestId = crypto.randomUUID(); let parsed, revision = 0;
+    const session = generation(), flow = current(), requestId = randomUUID(); let parsed, revision = 0;
     dialog.innerHTML = `<form><div class="dialog-heading"><h2>워크플로우 JSON 가져오기</h2><button type="button" data-close="workflow-file-dialog" class="button secondary">닫기</button></div><label class="field">JSON 파일 · 최대 1MiB<input type="file" accept=".json,application/json" data-workflow-file required></label><label class="field">적용 대상<select name="destination"><option value="new">새 OFF 초안</option>${flow ? '<option value="current">현재 편집 초안에 적용</option>' : ''}</select></label><p data-file-summary>파일을 선택하면 실행 없이 검증합니다.</p><div data-file-preview></div><p class="form-error" data-file-error hidden></p><div class="dialog-actions"><button type="submit" class="button primary" disabled>검토한 정의 가져오기</button></div></form>`;
     dialog.showModal();
     const form = dialog.querySelector('form'), button = form.querySelector('[type=submit]');
@@ -50,7 +51,7 @@ export function createWorkflowFiles({ api, escape, generation, active, current, 
     dialog.innerHTML = `<div class="dialog-heading"><h2>서비스 계산 상태와 보류</h2><button class="button secondary" data-close="workflow-file-dialog">닫기</button></div><p>계산 상태는 외부 시스템의 실제 상태와 다를 수 있습니다. 보류 해소 후 워크플로우에서 현재 상태를 수동 평가하세요.</p><p class="form-error" data-file-error hidden></p>${data.services.map((item, index) => `<div class="wf-service-row"><strong>${escape(item.service)}</strong> · ${escape(({ incident: '적색', warning: '황색', '': '정상' })[item.severity])}${item.hold ? `<p>확인 필요 · 실행 ${escape(item.hold.runId)}</p><button class="button secondary" data-resolve-service="${index}">확인 후 보류 해소</button>` : ' · 보류 없음'}</div>`).join('') || '<p>아직 수립된 서비스 상태가 없습니다.</p>'}`;
     if (!dialog.open) dialog.showModal();
     for (const button of dialog.querySelectorAll('[data-resolve-service]')) {
-      const requestId = crypto.randomUUID();
+      const requestId = randomUUID();
       button.addEventListener('click', async () => {
       const item = data.services[Number(button.dataset.resolveService)];
       if (!confirm('이전 요청의 실제 적용 결과와 처리가 완전히 끝났음을 외부 시스템에서 확인했습니까? 현재 상태가 같다는 사실만으로는 충분하지 않습니다. 확인한 경우 보류를 해소하고 감사 기록을 남깁니다.')) return;

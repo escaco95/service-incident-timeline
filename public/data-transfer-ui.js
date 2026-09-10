@@ -1,3 +1,4 @@
+import { randomUUID } from './random-id.js';
 const BUSY = new Set(['preparing', 'uploading', 'validating', 'restoring']);
 export function createDataTransferUI({ api, authenticated, generation, confirmRestore, onRestored, toast }) {
   const $ = selector => document.querySelector(selector);
@@ -53,7 +54,7 @@ export function createDataTransferUI({ api, authenticated, generation, confirmRe
   $('#data-export').addEventListener('click', async () => {
     if (starting || !authenticated()) return;
     starting = true; const session = generation(); render(); $('#data-export').textContent = '데이터 내보내는 중…';
-    try { const job = await api('/api/settings/transfers/export', { method: 'POST', body: JSON.stringify({ requestId: crypto.randomUUID() }) }); if (session === generation()) accept(job); }
+    try { const job = await api('/api/settings/transfers/export', { method: 'POST', body: JSON.stringify({ requestId: randomUUID() }) }); if (session === generation()) accept(job); }
     catch (error) { if (session === generation()) toast(error.message, true); }
     finally { starting = false; render(); poll(); }
   });
@@ -64,7 +65,7 @@ export function createDataTransferUI({ api, authenticated, generation, confirmRe
     if (file.size > 8 * 1024 ** 3 || !file.name.toLowerCase().endsWith('.zip')) { toast('8 GiB 이하의 ZIP 파일을 선택해 주세요.', true); return; }
     starting = true; const session = generation(); render(); $('#data-import').textContent = '업로드 중…';
     try {
-      const job = await api('/api/settings/transfers/import', { method: 'POST', body: JSON.stringify({ name: file.name, bytes: file.size, requestId: crypto.randomUUID() }) });
+      const job = await api('/api/settings/transfers/import', { method: 'POST', body: JSON.stringify({ name: file.name, bytes: file.size, requestId: randomUUID() }) });
       if (session !== generation()) return;
       accept(job);
       const result = await new Promise((resolve, reject) => {

@@ -20,6 +20,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/random-id.js', ['random-id.js', 'text/javascript; charset=utf-8']],
   ['/services-ui.js', ['services-ui.js', 'text/javascript; charset=utf-8']],
   ['/log-policy-ui.js', ['log-policy-ui.js', 'text/javascript; charset=utf-8']],
   ['/danger-zone-ui.js', ['danger-zone-ui.js', 'text/javascript; charset=utf-8']],
