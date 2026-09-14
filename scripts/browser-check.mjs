@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.mjs';
+import { checkEventDuplication } from './event-duplication-browser.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const temporaryRoot = path.join(root, '.tmp');
@@ -1000,6 +1001,7 @@ try {
   await click(`document.querySelector('.timeline-label[data-action="detail"][data-id="${multiple.id}"]')`);
   assert.equal(await evaluate('document.querySelectorAll("[data-action=state-preview], [data-action=confirm-event-end], #state-preview-dialog").length'), 0);
   await click(`document.querySelector('[data-close="detail-dialog"]')`);
+  await checkEventDuplication({ app, evaluate, click, waitFor, command, screenshot, pressKey });
   // Audit timestamps use the same frozen clock as the browser's date filters.
   const auditFixtureTime = await evaluate('new Date().toISOString()');
   await app.vault.mutate(state => { for (const row of state.changes) row.at = auditFixtureTime; });
@@ -1291,7 +1293,7 @@ try {
     await waitFor('!!document.querySelector(".calendar")', 'login after password notice check');
   }
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('Browser checks passed: user menu and keyboard focus, persistent connection error and recovery, retry deduplication, stacked mobile notifications, responsive header, branding, theme persistence, setup, session, calendar popups, timeline navigation, manual CRUD, service catalog settings, policy-free event forms, change and workflow audit records, mobile layout, XSS rendering, password notice links and the external link gate, logout and login.');
+  console.log('Browser checks passed: user menu and keyboard focus, persistent connection error and recovery, retry deduplication, stacked mobile notifications, responsive header, branding, theme persistence, setup, session, calendar popups, timeline navigation, manual CRUD and event duplication, service catalog settings, policy-free event forms, change and workflow audit records, mobile layout, XSS rendering, password notice links and the external link gate, logout and login.');
   console.log(`Screenshots: ${output}`);
 } catch (error) {
   if (socket?.readyState === WebSocket.OPEN) await screenshot('failure').catch(() => {});

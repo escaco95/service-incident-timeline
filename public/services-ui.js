@@ -44,7 +44,7 @@ export function createServicesUI({ api, escape, generation, authenticated, onCha
     }
   });
 
-  async function openEditor(event) {
+  async function openEditor(event, duplicate = false) {
     const request = ++editorRequest, session = generation();
     selected = structuredClone(event?.services ?? (event?.service ? [{ kind: 'custom', label: event.service }] : []));
     eventForm.elements.service.value = '';
@@ -55,6 +55,10 @@ export function createServicesUI({ api, escape, generation, authenticated, onCha
       const result = await api('/api/services');
       if (request !== editorRequest || session !== generation() || !$('#event-dialog').open) return;
       settings = result;
+      if (duplicate) selected = selected.map(entry => {
+        const service = entry.kind === 'catalog' ? settings.services.find(item => item.id === entry.id) : null;
+        return service?.active ? { ...entry, label: service.name } : { kind: 'custom', label: entry.label };
+      });
       editorReady = true;
       renderSelections();
       $('#event-save').disabled = false;

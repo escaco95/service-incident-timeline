@@ -31,6 +31,7 @@ const paths = {
   settings: '<path d="M3 7h2m6 0h10M3 17h10m6 0h2"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/>',
   user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>',
   down: '<path d="m7 10 5 5 5-5"/>',
+  copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/>',
   eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
   shield: '<path d="m12 3 8 3v6c0 4-5 8-8 9-3-1-8-5-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/>',
   search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',
@@ -39,7 +40,7 @@ const paths = {
   check: '<path d="m5 12 4 4L19 6"/>', edit: '<path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6Z"/>'
 };
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] ?? paths.calendar}</svg>`;
-const state = { authenticated: false, initialized: false, events: [], revision: -1, view: 'calendar', date: dateKey(new Date()), filter: 'all', highlightedId: null, editing: null, deleting: null, syncing: false, syncError: false };
+const state = { authenticated: false, initialized: false, events: [], revision: -1, view: 'calendar', date: dateKey(new Date()), filter: 'all', highlightedId: null, editor: null, deleting: null, syncing: false, syncError: false };
 let branding = { name: '', subtitle: '' };
 let brandingVersion = null;
 let brandingRequest = 0;
@@ -472,7 +473,7 @@ function endSession() {
   state.syncError = false;
   state.syncing = false;
   updateConnectionNotice();
-  state.editing = null;
+  state.editor = null;
   state.deleting = null;
   state.highlightedId = null;
   servicesUI.clear();
@@ -919,19 +920,19 @@ function editorDateTime(form, prefix) {
   return `${form.elements[`${prefix}Date`].value}T${form.elements[`${prefix}Hour`].value}:${form.elements[`${prefix}Minute`].value}`;
 }
 
-function openEditor(event = null, day = state.date) {
+function openEditor(event = null, day = state.date, duplicate = false) {
   if (!event) {
     const [start, end] = dayBounds(day);
     if (start === end) { toast(`${timezone}에서는 시간대 변경으로 건너뛴 날짜입니다. 다른 날짜를 선택해 주세요.`, true); return; }
   }
-  state.editing = event ? structuredClone(event) : null;
+  state.editor = event ? { start: event.start, end: event.end, ...(duplicate ? {} : { id: event.id, version: event.version }) } : null;
   const form = $('#event-form');
   form.reset();
   $('#event-error').hidden = true;
   $('#event-error').textContent = '';
   form.elements.endDate.setCustomValidity('');
-  $('#event-dialog-title').textContent = event ? '이벤트 편집' : '이벤트 추가';
-  $('#event-save').textContent = event ? '변경 내용 저장' : '이벤트 저장';
+  $('#event-dialog-title').textContent = duplicate ? '이벤트 복제' : event ? '이벤트 편집' : '이벤트 추가';
+  $('#event-save').textContent = duplicate ? '새 이벤트로 저장' : event ? '변경 내용 저장' : '이벤트 저장';
   $('#event-save').disabled = false;
   const start = dateKey(day) === dateKey(new Date()) ? new Date() : new Date(parseDateTimeInput(`${dateKey(day)}T09:00`) ?? startOfDay(day));
   form.elements.title.value = event?.title ?? '';
@@ -945,7 +946,7 @@ function openEditor(event = null, day = state.date) {
   $('#event-timezone').textContent = `${timezone} 기준 · 24시간제 (00:00~23:59)`;
   $('#event-dialog').showModal();
   form.elements.title.focus();
-  servicesUI.openEditor(event);
+  servicesUI.openEditor(event, duplicate);
 }
 
 async function openDetail(id, day) {
@@ -962,6 +963,7 @@ async function openDetail(id, day) {
   $('#detail-dialog').showModal();
   $('#detail-content .dialog-actions').insertAdjacentHTML('beforebegin', `<div class="detail-view-actions" role="group" aria-label="이벤트 위치 보기"><button type="button" class="button secondary" data-action="event-view" data-view="calendar" data-id="${event.id}" data-date="${viewDate}">${icon('calendar')}캘린더에서 보기</button><button type="button" class="button secondary" data-action="event-view" data-view="timeline" data-id="${event.id}" data-date="${viewDate}">${icon('timeline')}타임라인에서 보기</button></div>`);
   $('#detail-content .detail-right').insertAdjacentHTML('afterbegin', `<button class="button secondary" data-action="event-audit" data-id="${event.id}">관련 감사 기록</button>`);
+  $('#detail-content [data-action="edit-event"]').insertAdjacentHTML('beforebegin', `<button class="button secondary" data-action="duplicate-event" data-id="${event.id}">${icon('copy')}복제</button>`);
 
 }
 
@@ -1054,14 +1056,14 @@ $('#event-form').elements.openEnded.addEventListener('change', event => {
 $('#event-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const start = parseDateTimeInput(editorDateTime(form, 'start'), state.editing?.start);
-  const end = form.elements.openEnded.checked ? null : parseDateTimeInput(editorDateTime(form, 'end'), state.editing?.end);
+  const start = parseDateTimeInput(editorDateTime(form, 'start'), state.editor?.start);
+  const end = form.elements.openEnded.checked ? null : parseDateTimeInput(editorDateTime(form, 'end'), state.editor?.end);
   const errorNode = $('#event-error');
   errorNode.hidden = true;
   if (!start || (!form.elements.openEnded.checked && !end)) { errorNode.textContent = `${timezone} 기준의 유효하고 중복되지 않는 시각을 입력해 주세요. 서머타임 전환으로 건너뛰거나 두 번 나타나는 시각은 새로 지정할 수 없습니다.`; errorNode.hidden = false; return; }
   if (end && end <= start) { form.elements.endDate.setCustomValidity('종료 시각은 시작 시각보다 늦어야 합니다.'); form.elements.endDate.reportValidity(); return; }
   const fields = { title: form.elements.title.value, service: form.elements.service.value, category: form.elements.category.value, description: form.elements.description.value, start, end };
-  const editing = state.editing;
+  const editing = state.editor?.id ? state.editor : null;
   if (editing) fields.version = editing.version;
   $('#event-save').disabled = true;
   try {
@@ -1180,10 +1182,11 @@ document.addEventListener('click', async click => {
     case 'detail': openDetail(button.dataset.id, button.dataset.date); break;
     case 'event-view': showEventInView(button.dataset.id, button.dataset.view, button.dataset.date); break;
     case 'clear-highlight': state.highlightedId = null; renderView(); break;
-    case 'edit-event': {
+    case 'edit-event':
+    case 'duplicate-event': {
       const event = state.events.find(event => event.id === button.dataset.id) ?? (detailEvent?.id === button.dataset.id ? detailEvent : null);
       $('#detail-dialog').close();
-      if (event) openEditor(event);
+      if (event) openEditor(event, state.date, action === 'duplicate-event');
       else toast('이미 삭제된 이벤트입니다.', true);
       break;
     }
