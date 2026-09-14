@@ -28,6 +28,9 @@ const ASSETS = new Map([
   ['/data-transfer-ui.js', ['data-transfer-ui.js', 'text/javascript; charset=utf-8']],
   ['/audit-ui.js', ['audit-ui.js', 'text/javascript; charset=utf-8']],
   ['/event-loader.js', ['event-loader.js', 'text/javascript; charset=utf-8']],
+  ['/event-content.js', ['event-content.js', 'text/javascript; charset=utf-8']],
+  ['/event-body-ui.js', ['event-body-ui.js', 'text/javascript; charset=utf-8']],
+  ['/vendor/dompurify/purify.es.js', ['vendor/dompurify/purify.es.js', 'text/javascript; charset=utf-8']],
   ['/external-link-ui.js', ['external-link-ui.js', 'text/javascript; charset=utf-8']],
   ['/audit.css', ['audit.css', 'text/css; charset=utf-8']],
   ['/workflow-spec.js', ['workflow-spec.js', 'text/javascript; charset=utf-8']],
@@ -355,12 +358,12 @@ export async function createApp(options = {}) {
       }
       if (pathname === '/api/events') {
         if (req.method === 'GET') return send(res, 200, await vault.read(new URL(req.url, 'http://localhost').searchParams));
-        if (req.method === 'POST') return send(res, 201, await vault.add(await json(req)));
+        if (req.method === 'POST') return send(res, 201, await vault.add(await json(req, 1024 * 1024)));
       }
       const match = /^\/api\/events\/([0-9a-f-]{36})$/.exec(pathname);
       if (match) {
         if (req.method === 'GET') return send(res, 200, { event: await vault.getRecord('events', match[1]), revision: vault.state.revision });
-        const body = await json(req);
+        const body = await json(req, req.method === 'PUT' ? 1024 * 1024 : 256 * 1024);
         if (req.method === 'PUT') return send(res, 200, await vault.update(match[1], body));
         if (req.method === 'DELETE') return send(res, 200, await vault.remove(match[1], body.version));
       }

@@ -141,7 +141,8 @@ export function createAuditUI({ api, escape, icon, generation, authenticated, ac
     if (value.services) parts.push(`서비스: ${value.services.map(item => item.label ?? `${item.name ?? item.id} (${item.active ? '사용' : '사용 안 함'})`).join(', ') || '없음'}`);
     if (value.start) parts.push(`시작 ${formatTime(value.start)}`);
     if ('end' in value) parts.push(`종료 ${value.end ? formatTime(value.end) : '미정'}`);
-    if (value.description) parts.push(value.description);
+    if (value.description) parts.push(`메모: ${value.description}`);
+    if (Object.hasOwn(value, 'body')) parts.push(`본문 (${value.bodyFormat === 'html' ? 'HTML' : 'Text'}): ${value.body || '비어 있음'}`);
     return `${parts.map(escape).join('<br>')}<details><summary>저장된 상세 값</summary>${json(value)}</details>`;
   }
 

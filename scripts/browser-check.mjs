@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.mjs';
 import { checkEventDuplication } from './event-duplication-browser.mjs';
+import { checkEventBody } from './event-body-browser.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const temporaryRoot = path.join(root, '.tmp');
@@ -34,6 +35,7 @@ const errors = [];
 const mutations = [];
 const auditQueries = [];
 const serviceQueries = [];
+const bodyResourceRequests = [];
 async function until(check, message, timeout = 10000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check()) return; await delay(70); }
@@ -350,6 +352,7 @@ try {
     }
     if (data.method === 'Runtime.exceptionThrown') errors.push(data.params.exceptionDetails.exception?.description || data.params.exceptionDetails.text);
     if (data.method === 'Network.requestWillBeSent' && !['GET', 'HEAD'].includes(data.params.request.method)) mutations.push(data.params.request.url);
+    if (data.method === 'Network.requestWillBeSent' && data.params.request.url.includes('event-body-probe')) bodyResourceRequests.push(data.params.request.url);
     if (data.method === 'Network.requestWillBeSent' && new URL(data.params.request.url).pathname === '/api/audit') auditQueries.push(new URL(data.params.request.url).searchParams);
     if (data.method === 'Network.requestWillBeSent' && data.params.request.method === 'GET' && new URL(data.params.request.url).pathname === '/api/services') serviceQueries.push(data.params.request.url);
   });
@@ -1002,6 +1005,7 @@ try {
   assert.equal(await evaluate('document.querySelectorAll("[data-action=state-preview], [data-action=confirm-event-end], #state-preview-dialog").length'), 0);
   await click(`document.querySelector('[data-close="detail-dialog"]')`);
   await checkEventDuplication({ app, evaluate, click, waitFor, command, screenshot, pressKey });
+  await checkEventBody({ app, evaluate, click, waitFor, command, screenshot, resourceRequests: bodyResourceRequests });
   // Audit timestamps use the same frozen clock as the browser's date filters.
   const auditFixtureTime = await evaluate('new Date().toISOString()');
   await app.vault.mutate(state => { for (const row of state.changes) row.at = auditFixtureTime; });
@@ -1293,7 +1297,7 @@ try {
     await waitFor('!!document.querySelector(".calendar")', 'login after password notice check');
   }
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('Browser checks passed: user menu and keyboard focus, persistent connection error and recovery, retry deduplication, stacked mobile notifications, responsive header, branding, theme persistence, setup, session, calendar popups, timeline navigation, manual CRUD and event duplication, service catalog settings, policy-free event forms, change and workflow audit records, mobile layout, XSS rendering, password notice links and the external link gate, logout and login.');
+  console.log('Browser checks passed: user menu and keyboard focus, persistent connection error and recovery, retry deduplication, stacked mobile notifications, responsive header, branding, theme persistence, setup, session, calendar popups, timeline navigation, manual CRUD and event duplication, notes and Text/HTML bodies, original HTML preservation, blocked email resources, service catalog settings, policy-free event forms, change and workflow audit records, mobile layout, XSS rendering, password notice links and the external link gate, logout and login.');
   console.log(`Screenshots: ${output}`);
 } catch (error) {
   if (socket?.readyState === WebSocket.OPEN) await screenshot('failure').catch(() => {});

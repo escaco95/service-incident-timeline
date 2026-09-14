@@ -124,6 +124,28 @@ test('ZIP은 준비 완료부터 24시간 보관하고 새 생성 시작 전에 
   } finally { release(); f.app.transfers.snapshot = snapshot; }
 });
 
+test('본문이 없는 기존 ZIP과 HTML 본문 ZIP을 복원해도 메모와 원문을 보존한다', async t => {
+  const f = await fixture(t); await f.setup();
+  const body = ' \r\n<table><tr><td>협력사 증빙 &amp; 원문</td></tr></table>\r\n ';
+  const event = (await f.app.vault.add({ title: '본문 백업', description: '기존 메모', body, bodyFormat: 'html', services: [], category: 'maintenance', start: '2026-09-09T00:00:00.000Z', end: null })).event;
+  const exported = await f.exported(), data = await contents(f, exported.bytes);
+  const record = [...data.values()].flatMap(value => value.events ?? []).find(row => row.id === event.id);
+  assert.equal(record.body, body);
+  const imported = await f.uploaded(exported.bytes); assert.equal(imported.status, 'ready', imported.error);
+  assert.equal((await f.restore(imported)).status, 'completed');
+  assert.equal((await f.app.vault.getRecord('events', event.id)).body, body);
+  delete record.body; delete record.bodyFormat;
+  const old = await f.uploaded(await repack(f, data)); assert.equal(old.status, 'ready', old.error);
+  assert.equal((await f.restore(old)).status, 'completed');
+  await f.restart(); await f.call('/api/login', 'POST', { password });
+  const restored = await f.app.vault.getRecord('events', event.id);
+  assert.equal(restored.description, '기존 메모'); assert.equal(restored.body, ''); assert.equal(restored.bodyFormat, 'text');
+  const invalid = await contents(f, exported.bytes);
+  [...invalid.values()].flatMap(value => value.events ?? []).find(row => row.id === event.id).bodyFormat = 'script';
+  assert.equal((await f.uploaded(await repack(f, invalid))).status, 'failed');
+  assert.equal((await f.app.vault.getRecord('events', event.id)).body, '');
+});
+
 test('복호화 ZIP 왕복: 검증 전 보존, 전체 교체, 현재 암호 유지, 미완료 실행 중단과 재시작', async t => {
   const f = await fixture(t); await f.setup(); const seed = await f.seed(); const exported = await f.exported();
   const data = await contents(f, exported.bytes);

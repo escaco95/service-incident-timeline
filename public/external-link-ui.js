@@ -46,4 +46,10 @@ export function createExternalLinkUI({ toast }) {
   document.addEventListener('click', intercept, true);
   // Middle clicks fire auxclick instead of click.
   document.addEventListener('auxclick', event => { if (event.button === 1) intercept(event); }, true);
+  return { open: (href, opener) => {
+    const url = new URL(href, location.href);
+    if (!['http:', 'https:'].includes(url.protocol)) return;
+    if (url.origin === location.origin) window.open(url.href, '_blank', 'noopener,noreferrer');
+    else openGate(url, opener);
+  } };
 }

@@ -7,6 +7,7 @@ import { createDataTransferUI } from './data-transfer-ui.js';
 import { createAuditUI } from './audit-ui.js';
 import { createWorkflowUI } from './workflow-ui.js';
 import { createExternalLinkUI } from './external-link-ui.js';
+import { createEventBodyUI } from './event-body-ui.js';
 
 let timezone = 'UTC';
 let { dateParts, dateKey, calendarDate, startOfDay, addDays, fromDateKey, dayBounds, overlaps, onDay, timeLabel, dateTimeInput, parseDateTimeInput, formatDay, formatDateTime, weekSegments, daySegment } = createDateUtils(timezone);
@@ -100,7 +101,8 @@ const logPolicyUI = createLogPolicyUI({ api, generation: () => sessionGeneration
 let pendingAuditEvent;
 const auditUI = createAuditUI({ api, escape, icon, generation: () => sessionGeneration, authenticated: () => state.authenticated, active: () => state.view === 'audit', today: () => dateKey(new Date()), dateBoundary: value => startOfDay(value).toISOString(), formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()), events: () => state.events, openEvent: id => openDetail(id) });
 const workflowUI = createWorkflowUI({ api, authenticated: () => state.authenticated, generation: () => sessionGeneration, active: () => state.view === 'workflow', openRuns: (id, runId) => { state.view = 'audit'; renderApp(); auditUI.openWorkflow(id, runId); }, escape, toast, formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()) });
-createExternalLinkUI({ toast });
+const externalLinks = createExternalLinkUI({ toast });
+const eventBodyUI = createEventBodyUI({ openLink: externalLinks.open });
 const dangerZoneUI = createDangerZoneUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, onSavingChange: setSettingsBusy, toast, onReset: applyDataReset });
 const dataTransferUI = createDataTransferUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, confirmRestore: (job, onStarted) => dangerZoneUI.restore(job, onStarted), onRestored: applyDataReset, toast });
 async function applyDataReset(result) {
@@ -938,6 +940,7 @@ function openEditor(event = null, day = state.date, duplicate = false) {
   form.elements.title.value = event?.title ?? '';
   form.elements.service.value = event?.service ?? '';
   form.elements.description.value = event?.description ?? '';
+  eventBodyUI.openEditor(event);
   form.elements.category.value = event?.category ?? (state.filter !== 'all' ? state.filter : 'maintenance');
   setEditorDateTime(form, 'start', event?.start ?? start);
   setEditorDateTime(form, 'end', event?.end ?? new Date(+(event ? new Date(event.start) : start) + 3600000));
@@ -959,8 +962,9 @@ async function openDetail(id, day) {
   }
   detailEvent = event;
   const viewDate = eventViewDate(event, day);
-  $('#detail-content').innerHTML = `<div class="dialog-heading"><div><span class="detail-type ${event.category}"><i class="dot ${event.category}"></i>${categories[event.category]}</span><h2 id="detail-title">${escape(event.title)}</h2></div><button class="icon-button" data-close="detail-dialog" aria-label="닫기"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 5 14 14M19 5 5 19"/></svg></button></div><dl class="detail-meta"><dt>서비스</dt><dd>${escape(event.service || '지정하지 않음')}</dd><dt>시작 시각</dt><dd>${formatDateTime(event.start)}</dd><dt>종료 시각</dt><dd>${event.end === null ? '종료 시각 미정 <span class="infinity">∞</span>' : formatDateTime(event.end)}</dd><dt>시간대</dt><dd>${escape(timezone)}</dd></dl><div class="detail-description">${escape(event.description || '추가로 기록된 내용이 없습니다.')}</div><div class="detail-bottom">마지막 수정 ${formatDateTime(event.updatedAt)}</div><div class="dialog-actions"><button class="text-danger" data-action="request-delete" data-id="${event.id}">이벤트 삭제</button><div class="detail-right"><button class="button secondary" data-close="detail-dialog">닫기</button><button class="button primary" data-action="edit-event" data-id="${event.id}">${icon('edit')}편집</button></div></div>`;
+  $('#detail-content').innerHTML = `<div class="dialog-heading"><div><span class="detail-type ${event.category}"><i class="dot ${event.category}"></i>${categories[event.category]}</span><h2 id="detail-title">${escape(event.title)}</h2></div><button class="icon-button" data-close="detail-dialog" aria-label="닫기"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 5 14 14M19 5 5 19"/></svg></button></div><dl class="detail-meta"><dt>서비스</dt><dd>${escape(event.service || '지정하지 않음')}</dd><dt>시작 시각</dt><dd>${formatDateTime(event.start)}</dd><dt>종료 시각</dt><dd>${event.end === null ? '종료 시각 미정 <span class="infinity">∞</span>' : formatDateTime(event.end)}</dd><dt>시간대</dt><dd>${escape(timezone)}</dd></dl><h3 class="detail-section-title">메모</h3><div class="detail-description">${escape(event.description || '등록된 메모가 없습니다.')}</div><h3 class="detail-section-title">본문</h3><div id="detail-body"></div><div class="detail-bottom">마지막 수정 ${formatDateTime(event.updatedAt)}</div><div class="dialog-actions"><button class="text-danger" data-action="request-delete" data-id="${event.id}">이벤트 삭제</button><div class="detail-right"><button class="button secondary" data-close="detail-dialog">닫기</button><button class="button primary" data-action="edit-event" data-id="${event.id}">${icon('edit')}편집</button></div></div>`;
   $('#detail-dialog').showModal();
+  eventBodyUI.render($('#detail-body'), event);
   $('#detail-content .dialog-actions').insertAdjacentHTML('beforebegin', `<div class="detail-view-actions" role="group" aria-label="이벤트 위치 보기"><button type="button" class="button secondary" data-action="event-view" data-view="calendar" data-id="${event.id}" data-date="${viewDate}">${icon('calendar')}캘린더에서 보기</button><button type="button" class="button secondary" data-action="event-view" data-view="timeline" data-id="${event.id}" data-date="${viewDate}">${icon('timeline')}타임라인에서 보기</button></div>`);
   $('#detail-content .detail-right').insertAdjacentHTML('afterbegin', `<button class="button secondary" data-action="event-audit" data-id="${event.id}">관련 감사 기록</button>`);
   $('#detail-content [data-action="edit-event"]').insertAdjacentHTML('beforebegin', `<button class="button secondary" data-action="duplicate-event" data-id="${event.id}">${icon('copy')}복제</button>`);
@@ -1067,6 +1071,7 @@ $('#event-form').addEventListener('submit', async event => {
   if (editing) fields.version = editing.version;
   $('#event-save').disabled = true;
   try {
+    Object.assign(fields, eventBodyUI.fields());
     Object.assign(fields, servicesUI.eventFields());
     const result = await api(editing ? `/api/events/${editing.id}` : '/api/events', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(fields) });
     // Keep a just-saved event visible, even when a category filter was active.
@@ -1074,6 +1079,7 @@ $('#event-form').addEventListener('submit', async event => {
     if (!overlaps(result.event, state.date)) state.date = dateKey(result.event.start);
     $('#event-dialog').close();
     form.reset();
+    if (state.view === 'timeline') renderTimeline();
     await loadEvents(false);
     renderApp();
     toast(editing ? '변경 내용을 암호화하여 저장했습니다.' : '새 이벤트를 암호화하여 저장했습니다.');

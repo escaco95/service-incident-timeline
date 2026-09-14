@@ -45,7 +45,11 @@
           <div class="time-controls"><select name="endHour" aria-label="종료 시 (00~23)" required></select><span aria-hidden="true">:</span><select name="endMinute" aria-label="종료 분 (00~59)" required></select></div>
         </fieldset>
       </div>
-      <label class="field">상세 내용 <span class="optional">선택</span><textarea name="description" rows="4" maxlength="4000" placeholder="영향 범위, 조치 내용, 참고할 사항을 기록하세요."></textarea></label>
+      <label class="field">메모 <span class="optional">선택</span><textarea name="description" rows="4" maxlength="4000" placeholder="영향 범위, 조치 내용, 참고할 사항을 기록하세요."></textarea></label>
+      <label class="field">본문 형식<select name="bodyFormat"><option value="text">Text · 일반 텍스트</option><option value="html">HTML · 서식 있는 본문</option></select></label>
+      <label class="field">본문 <span class="optional">선택</span><textarea name="body" rows="8" maxlength="131072" aria-describedby="event-body-hint" placeholder="텍스트 또는 이메일의 HTML 소스를 입력하세요."></textarea></label>
+      <p class="form-hint" id="event-body-hint">최대 128KiB. HTML은 표와 기본 서식을 표시하며 이미지와 외부 콘텐츠는 불러오지 않습니다. 형식을 바꿔도 입력한 원문은 유지됩니다.</p>
+      <details class="event-body-preview" id="event-body-preview"><summary>본문 미리보기</summary><div id="event-body-preview-content"></div></details>
       <p class="form-hint" id="event-timezone"></p>
       <p class="form-error" id="event-error" role="alert" hidden></p>
       <div class="dialog-actions"><button class="button secondary" type="button" data-close="event-dialog">취소</button><button class="button primary" id="event-save" type="submit">이벤트 저장</button></div>

@@ -31,7 +31,7 @@ test('registered schedules reproduce start and end inputs while keeping an edita
     const def = definition(type), values = setup(def), selected = eventDryRunValues(def.nodes[0], event);
     values.now = selected.now; values.nodes.trigger = selected.values;
     const result = dryRunWorkflow(def, values);
-    assert.deepEqual(result.context.event, event);
+    assert.deepEqual(result.context.event, { ...event, body: '', bodyFormat: 'text' });
     assert.equal(result.context.trigger.type, type);
     assert.equal(result.context.trigger.scheduledAt, event[type]);
     assert.equal(result.context.run.startedAt, event[type]);

@@ -6,7 +6,7 @@
 
 ## 실행 환경
 
-Node.js 22.13 이상과 기본 모듈만 사용하며 패키지 설치·빌드가 필요하지 않다. `node server.mjs`로 실행한다. 환경 변수와 VS Code 디버깅은 [README](../README.md#실행)를 참고한다.
+서버는 Node.js 22.13 이상과 기본 모듈을 사용하며 패키지 설치·빌드가 필요하지 않다. 브라우저의 HTML 정제용 DOMPurify 배포 파일을 저장소에 포함하며 [버전·라이선스·갱신 절차](third-party.md)를 따른다. `node server.mjs`로 실행한다. 환경 변수와 VS Code 디버깅은 [README](../README.md#실행)를 참고한다.
 
 프런트엔드와 서버는 함께 갱신하며 서버 코드 변경 후 개발 서버를 재시작한다. 실제 데이터, `.env`, `branding.json`은 환경별로 관리하고 커밋하지 않는다. 테스트는 임시 데이터 디렉터리와 로컬 HTTP 서버를 사용한다.
 
@@ -16,6 +16,7 @@ Node.js 22.13 이상과 기본 모듈만 사용하며 패키지 설치·빌드�
 | --- | --- |
 | 서버 | `server.mjs`: HTTP/HTTPS, 세션, 인증·출처 검사, API와 정적 파일 |
 | 이벤트·서비스 | `lib/services.mjs`: 서비스 목록·이벤트 서비스 선택 검증. `lib/vault.mjs`: 이벤트 검증·키 도출·암호화 저장 |
+| 이벤트 본문 | `public/event-content.js`: 기존 데이터의 본문 기본값. `public/event-body-ui.js`: 입력·미리보기·HTML 정제와 격리 표시 |
 | 저장·조회 | `lib/daily-storage.mjs`: 날짜별 파일과 관리 파일. `lib/daily-index.mjs`, `lib/record-queries.mjs`: 기간 요약·ID 색인·페이지 조회 |
 | 브랜딩 | `lib/branding.mjs`: 설정 읽기·검증·저장·충돌 검사. `public/theme.js`: 브라우저별 테마 |
 | 워크플로우 정의 | `public/workflow-spec.js`: 공통 노드 규격·제한. `lib/workflow-definition.mjs`: 정의·cron·템플릿 검증. `lib/workflow-file.mjs`: JSON 교환·참조 검증 |
@@ -52,7 +53,7 @@ node --test test/*.test.mjs
 
 | 명령 | 검증 범위 |
 | --- | --- |
-| `node scripts/browser-check.mjs` | 캘린더·타임라인·수기 편집·이벤트 복제·설정·감사 조회·모바일·XSS 렌더링·안내문 링크와 외부 이동 확인·세션 |
+| `node scripts/browser-check.mjs` | 캘린더·타임라인·수기 편집·이벤트 복제·메모와 Text/HTML 본문·설정·감사 조회·모바일·XSS 렌더링·외부 리소스 차단·안내문 링크와 외부 이동 확인·세션 |
 | `node scripts/http-browser-check.mjs` | 브라우저 내부에서 `navix.test`를 로컬 서버로 연결한 일반 HTTP 환경. `--localhost`로 로컬 주소 비교 |
 | `node scripts/workflow-browser-check.mjs` | 워크플로우 파일 교환·편집·저장·실행·Dry-Run·보류·재평가 |
 | `node scripts/danger-zone-browser-check.mjs` | 부분·전체 초기화 확인과 취소 |
