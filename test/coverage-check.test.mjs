@@ -80,8 +80,11 @@ test('실제 명령은 coverage 경고에서 성공하고 테스트 실패·측�
     await write(root, `scripts/${file}`, await fs.readFile(new URL(`../scripts/${file}`, import.meta.url), 'utf8'));
   }
   await write(root, 'lib/changed.mjs', 'export function value(ok) {\n  if (ok) return 1;\n  return 2;\n}\n');
+  await write(root, 'public/app.js', 'document.title = "브라우저 전용";\n');
+  await write(root, 'public/password-spec.js', 'export function valid(ok) {\n  if (ok) return 1;\n  return 2;\n}\n');
+  await write(root, 'public/audit-ui.js', 'export function range(ok) {\n  if (ok) return 1;\n  return 2;\n}\n');
   await write(root, 'public/새 화면.js', 'document.title = "화면";\n');
-  const passing = 'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { value } from "../lib/changed.mjs";\ntest("정상 경로", () => assert.equal(value(true), 1));\n';
+  const passing = 'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { value } from "../lib/changed.mjs";\nimport { valid } from "../public/password-spec.js";\nimport { range } from "../public/audit-ui.js";\ntest("정상 경로", () => { assert.equal(value(true), 1); assert.equal(valid(true), 1); assert.equal(range(true), 1); });\n';
   await write(root, 'test/value.test.mjs', passing);
   const env = { ...process.env };
   // Nested runners must not inherit the outer runner's context or coverage directory.
@@ -91,12 +94,18 @@ test('실제 명령은 coverage 경고에서 성공하고 테스트 실패·측�
   const warned = run();
   assert.equal(warned.status, 0, warned.stdout + warned.stderr);
   assert.match(warned.stderr, /lib\/changed.mjs:3:.*실행되지/);
+  assert.match(warned.stderr, /public\/password-spec.js:3:.*실행되지/);
+  assert.match(warned.stderr, /public\/audit-ui.js:3:.*실행되지/);
   assert.match(warned.stderr, /public\/새 화면.js:.*측정 정보가 없습니다/);
-  await write(root, 'test/value.test.mjs', passing + 'test("오류 경로", () => assert.equal(value(false), 2));\n');
+  assert.doesNotMatch(warned.stderr, /public\/app.js/);
+  assert.match(warned.stdout, /브라우저 전용 변경: 1개 파일/);
+  assert.match(warned.stdout, /\[브라우저 검증 필요\] public\/app.js/);
+  await write(root, 'test/value.test.mjs', passing + 'test("오류 경로", () => { assert.equal(value(false), 2); assert.equal(valid(false), 2); assert.equal(range(false), 2); });\n');
   await fs.unlink(path.join(root, 'public/새 화면.js'));
   const covered = run();
   assert.equal(covered.status, 0, covered.stdout + covered.stderr);
   assert.doesNotMatch(covered.stderr, /coverage 경고/);
+  assert.match(covered.stdout, /\[브라우저 검증 필요\] public\/app.js/);
   await write(root, 'test/value.test.mjs', passing + 'test("실패", () => assert.fail("expected"));\n');
   const failed = run();
   assert.equal(failed.status, 1);

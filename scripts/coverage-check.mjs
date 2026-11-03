@@ -2,13 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { changedLines, coverageWarnings } from './coverage-changes.mjs';
+import { changedLines, coverageWarnings, BROWSER_ONLY_FILES } from './coverage-changes.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 try {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== '--base' || !args[1])) throw Error('사용법: node scripts/coverage-check.mjs [--base 기준브랜치]');
   const changed = await changedLines(root, args[1]);
+  const browserChanged = [...changed.keys()].filter(file => BROWSER_ONLY_FILES.includes(file));
+  for (const file of browserChanged) changed.delete(file);
   const temporaryRoot = path.join(root, '.tmp');
   await fs.mkdir(temporaryRoot, { recursive: true });
   const directory = await fs.mkdtemp(path.join(temporaryRoot, 'coverage-'));
@@ -19,6 +21,7 @@ try {
     const child = spawn(process.execPath, [
       '--test', '--experimental-test-coverage',
       '--test-coverage-exclude=test/**', '--test-coverage-exclude=scripts/**', '--test-coverage-exclude=public/vendor/**',
+      ...BROWSER_ONLY_FILES.map(file => `--test-coverage-exclude=${file}`),
       '--test-reporter=spec', '--test-reporter-destination=stdout',
       '--test-reporter=lcov', `--test-reporter-destination=${reportFile}`, ...tests,
     ], { cwd: root, stdio: 'inherit', windowsHide: true });
@@ -27,8 +30,12 @@ try {
   });
   if (status.code !== 0) throw Error(`테스트 또는 coverage 수집이 실패했습니다 (${status.signal || status.code}).`);
   const warnings = coverageWarnings(root, changed, await fs.readFile(reportFile, 'utf8'));
-  console.log(`\n변경 코드 coverage: ${changed.size}개 파일, 경고 ${warnings.length}개`);
+  console.log(`\n변경 코드 Node coverage: ${changed.size}개 파일, 경고 ${warnings.length}개`);
   for (const warning of warnings) console.warn(`[coverage 경고] ${warning}`);
+  if (browserChanged.length) {
+    console.log(`브라우저 전용 변경: ${browserChanged.length}개 파일 (별도 브라우저 검증 필요)`);
+    for (const file of browserChanged) console.log(`[브라우저 검증 필요] ${file}`);
+  }
   console.log(`측정 보고서: ${path.relative(root, reportFile)}`);
   console.log('\n[작업 완료 전 재확인 — 자동 검사로 판정하지 않는 항목]');
   console.log('- 변경한 요구사항의 정상·오류·경계값을 의미 있는 검증문으로 테스트했는지 확인하세요.');

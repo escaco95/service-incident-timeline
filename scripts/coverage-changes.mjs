@@ -2,6 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+export const BROWSER_ONLY_FILES = Object.freeze([
+  'public/app.js', 'public/theme.js', 'public/services-ui.js', 'public/log-policy-ui.js',
+  'public/vault-ui.js', 'public/danger-zone-ui.js', 'public/data-transfer-ui.js',
+  'public/event-body-ui.js', 'public/external-link-ui.js', 'public/workflow-context-ui.js',
+  'public/workflow-diagnostics-ui.js', 'public/workflow-dry-run-events.js',
+  'public/workflow-dry-run-ui.js', 'public/workflow-file-ui.js',
+  'public/workflow-switch-ui.js', 'public/workflow-ui.js'
+]);
+
 function git(root, args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
 }
