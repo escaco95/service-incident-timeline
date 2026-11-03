@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createApp } from '../server.mjs';
 
-const password = 'test-only-암호화-비밀번호-2026';
+const password = 'test-only-encryption-password-2026';
 const fields = (suffix = '') => ({ title: `민감한 장애 기록 ${suffix}`, service: '결제 시스템', category: 'incident', start: '2026-09-09T01:00:00.000Z', end: null, description: '비공개 API 토큰 예시: sensitive-fixture' });
 
 test('실제 HTTP 서버: 인증, 암호화, 동시 쓰기, 충돌, 재시작, 변조 보존', async t => {

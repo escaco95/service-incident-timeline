@@ -3,19 +3,21 @@ import https from 'node:https';
 import { importWorkflow, exportWorkflow, fileSchema } from './lib/workflow-file.mjs';
 import { LIMITS } from './public/workflow-spec.js';
 import { DRY_RUN_LIMITS } from './public/workflow-dry-run-spec.js';
+import { NEW_PASSWORD_HINT } from './public/password-spec.js';
 import { Workflows } from './lib/workflows.mjs';
 import { WorkflowEngine } from './lib/workflow-engine.mjs';
 import { SecretStore } from './lib/secret-store.mjs';
 import { LogMaintenance } from './lib/log-maintenance.mjs';
 import { RESET_TARGETS, resetData, hasPendingSystemReset, beginSystemReset, finishSystemReset } from './lib/reset.mjs';
-import { enrollSetupMarker, operatorResetRequested } from './lib/setup-marker.mjs';
+import { enrollSetupMarker, operatorResetRequested, assertStartupSetup } from './lib/setup-marker.mjs';
+import { readUnlockPassword } from './lib/startup.mjs';
 import { DataTransfers } from './lib/data-transfers.mjs';
 import { hasPendingRestore, completeRestore, publishRestore } from './lib/restore-journal.mjs';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Vault, AppError, checkPassword, recordChange } from './lib/vault.mjs';
+import { Vault, AppError, checkPassword, checkSetupPassword, recordChange } from './lib/vault.mjs';
 import { BrandingStore, brandingTitle, escapeHtml, validateBranding } from './lib/branding.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +25,7 @@ const ASSETS = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/random-id.js', ['random-id.js', 'text/javascript; charset=utf-8']],
+  ['/password-spec.js', ['password-spec.js', 'text/javascript; charset=utf-8']],
   ['/services-ui.js', ['services-ui.js', 'text/javascript; charset=utf-8']],
   ['/log-policy-ui.js', ['log-policy-ui.js', 'text/javascript; charset=utf-8']],
   ['/vault-ui.js', ['vault-ui.js', 'text/javascript; charset=utf-8']],
@@ -57,24 +60,39 @@ const ASSETS = new Map([
 const SESSION_AGE = 8 * 60 * 60 * 1000;
 
 export async function createApp(options = {}) {
+  let unlockPassword = options.unlockPassword;
+  options = { ...options }; delete options.unlockPassword;
+  const startupUnlock = unlockPassword !== undefined;
+  if (startupUnlock) checkPassword(unlockPassword);
   const brandingStore = new BrandingStore(options.brandingFile ?? path.join(ROOT, 'branding.json'));
-  const vault = await new Vault(options.dataDir ?? path.join(ROOT, 'data')).open();
+  const vault = new Vault(options.dataDir ?? path.join(ROOT, 'data'));
   try {
-    if (await hasPendingSystemReset(vault)) await finishSystemReset(vault, brandingStore);
+    await vault.open();
+    if (startupUnlock) await assertStartupSetup(vault);
+    else if (await hasPendingSystemReset(vault)) await finishSystemReset(vault, brandingStore);
     else {
       await enrollSetupMarker(vault);
       if (await operatorResetRequested(vault)) { await beginSystemReset(vault); await finishSystemReset(vault, brandingStore); }
       else if (await hasPendingRestore(vault)) await completeRestore(vault, brandingStore);
     }
     await brandingStore.open();
+    if (startupUnlock) {
+      if (vault.initialized) await vault.unlock(unlockPassword);
+      else await vault.setup(unlockPassword);
+    }
   }
   catch (error) { await vault.close(); throw error; }
+  finally { unlockPassword = undefined; }
   const workflows = new Workflows(vault, options.workflows);
   const secretStore = new SecretStore(vault);
   const workflowEngine = new WorkflowEngine(vault, options.workflows);
   const logMaintenance = new LogMaintenance(vault, { ...options.logMaintenance, timezone: () => brandingStore.branding.timezone });
+  if (startupUnlock) { workflowEngine.paused = true; logMaintenance.paused = true; }
   let transfers;
-  try { transfers = await new DataTransfers(vault, brandingStore).open(); }
+  try {
+    if (startupUnlock) await workflowEngine.unlock();
+    transfers = await new DataTransfers(vault, brandingStore).open();
+  }
   catch (error) { await logMaintenance.close(); await workflowEngine.close(); await vault.close(); throw error; }
   const sessions = new Map();
   const attempts = new Map();
@@ -204,7 +222,7 @@ export async function createApp(options = {}) {
         try {
           if (pathname === '/api/setup') {
             if (vault.initialized) throw new AppError(409, '이미 설정된 서비스입니다. 로그인해 주세요.');
-            checkPassword(body.password);
+            checkSetupPassword(body.password);
             if (body.passwordNotice !== undefined) {
               const current = await brandingStore.read();
               const branding = validateBranding({ ...current.branding, passwordNotice: body.passwordNotice });
@@ -387,7 +405,9 @@ export async function createApp(options = {}) {
     } finally { releaseRequest?.(); }
   };
 
-  const server = options.tls ? https.createServer(options.tls, handler) : http.createServer(handler);
+  let server;
+  try { server = options.tls ? https.createServer(options.tls, handler) : http.createServer(handler); }
+  catch (error) { await transfers.close(); await logMaintenance.close(); await workflowEngine.close(); await vault.close(); throw error; }
   // ZIP uploads stream to disk and may take much longer than ordinary JSON requests.
   server.requestTimeout = 2 * 60 * 60 * 1000;
   server.headersTimeout = 15_000;
@@ -406,6 +426,7 @@ export async function createApp(options = {}) {
     server, vault, secretStore, workflows, workflowEngine, logMaintenance, transfers, get branding() { return brandingStore.branding; },
     async listen(port = 8787, host = '127.0.0.1') {
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
+      if (startupUnlock) { workflowEngine.resume(); logMaintenance.resume(); }
       return server.address();
     },
     async close() {
@@ -425,22 +446,27 @@ export async function createApp(options = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  let app;
+  let app, unlockPassword, startupUnlock = false;
   try {
+    const args = process.argv.splice(2);
+    try { unlockPassword = await readUnlockPassword(args); }
+    finally { args.fill(''); }
+    startupUnlock = unlockPassword !== undefined;
+    const port = Number(process.env.PORT ?? 8787);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT는 1~65535여야 합니다.');
     if (Boolean(process.env.TLS_CERT) !== Boolean(process.env.TLS_KEY)) throw new Error('TLS_CERT와 TLS_KEY를 함께 지정해 주세요.');
     const tls = process.env.TLS_CERT ? { cert: await readFile(process.env.TLS_CERT), key: await readFile(process.env.TLS_KEY) } : undefined;
     const publicOrigin = process.env.PUBLIC_ORIGIN ? new URL(process.env.PUBLIC_ORIGIN).origin : undefined;
     if (publicOrigin && !/^https?:\/\//.test(publicOrigin)) throw new Error('PUBLIC_ORIGIN은 http 또는 https 주소여야 합니다.');
-    app = await createApp({
+    try { app = await createApp({
       dataDir: process.env.DATA_DIR || undefined, brandingFile: process.env.BRANDING_FILE || undefined, tls, publicOrigin,
+      unlockPassword,
       cookieSecure: process.env.COOKIE_SECURE === 'true' || Boolean(tls) || publicOrigin?.startsWith('https:')
-    });
-    const port = Number(process.env.PORT ?? 8787);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT는 1~65535여야 합니다.');
+    }); } finally { unlockPassword = undefined; }
     const host = process.env.HOST || '127.0.0.1';
     await app.listen(port, host);
     console.log(`${app.branding.name}: ${tls ? 'https' : 'http'}://${host}:${port}`);
-    console.log('암호화 키는 웹 화면에서 입력합니다. 종료: Ctrl+C');
+    console.log(startupUnlock ? '저장소와 백그라운드 실행기가 준비되었습니다. 웹에서는 로그인해 주세요. 종료: Ctrl+C' : '암호화 키는 웹 화면에서 입력합니다. 종료: Ctrl+C');
     let stopping = false;
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
       if (stopping) return;
@@ -449,7 +475,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       process.exit(0);
     });
   } catch (error) {
-    console.error(error.message);
+    unlockPassword = undefined;
+    console.error(startupUnlock && error.message !== NEW_PASSWORD_HINT ? '시작 시 저장소 잠금 해제 또는 실행기 초기화에 실패했습니다. 입력·파일·저장소 상태를 확인해 주세요.' : error.message);
     if (app) await app.close();
     process.exitCode = 1;
   }

@@ -9,6 +9,7 @@ import { createAuditUI } from './audit-ui.js';
 import { createWorkflowUI } from './workflow-ui.js';
 import { createExternalLinkUI } from './external-link-ui.js';
 import { createEventBodyUI } from './event-body-ui.js';
+import { validNewPassword, NEW_PASSWORD_HINT, NEW_PASSWORD_LIMITS } from './password-spec.js';
 
 let timezone = 'UTC';
 let { dateParts, dateKey, calendarDate, startOfDay, addDays, fromDateKey, dayBounds, overlaps, onDay, timeLabel, dateTimeInput, parseDateTimeInput, formatDay, formatDateTime, weekSegments, daySegment } = createDateUtils(timezone);
@@ -409,8 +410,8 @@ function renderAuth() {
       <div class="auth-visual" aria-hidden="true"><div class="visual-top"><strong>서비스 타임라인</strong><span>09:00　12:00　15:00　18:00</span></div><div class="visual-row"><span>정기 점검</span><div class="visual-track"><span class="visual-bar one">점검 완료</span></div></div><div class="visual-row"><span>API 장애</span><div class="visual-track"><span class="visual-bar two">장애 대응</span></div></div><div class="visual-row"><span>복구 확인</span><div class="visual-track"><span class="visual-bar three">정상화</span></div></div></div>
     </section><section class="auth-card"><div class="auth-key">${icon('lock')}</div><h2>${setup ? '처음 시작하기' : '기록 열기'}</h2><p class="auth-description">${setup ? '서비스 기록을 보호할 암호화 비밀번호를 설정하세요.<br>로그인 화면에 표시할 안내문도 함께 준비할 수 있습니다.' : '암호화 비밀번호를 입력해 주세요.<br>안전하게 보관한 서비스 기록을 불러옵니다.'}</p>
       ${setup ? '' : passwordNotice()}
-      <form id="auth-form"><label class="field">암호화 비밀번호<div class="password-wrap"><input name="password" type="password" required minlength="12" maxlength="256"${!setup && branding.passwordNotice ? ' aria-describedby="auth-password-notice"' : ''} autocomplete="${setup ? 'new-password' : 'current-password'}" placeholder="${setup ? '12자 이상의 비밀번호' : '비밀번호 입력'}"><button type="button" class="password-toggle" data-action="password-toggle" aria-label="비밀번호 표시" aria-pressed="false">${icon('eye')}</button></div></label>
-      ${setup ? `<label class="field">비밀번호 확인<input name="confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="비밀번호를 한 번 더 입력해 주세요"></label>
+      <form id="auth-form"><label class="field">암호화 비밀번호<div class="password-wrap"><input name="password" type="password" required minlength="${setup ? NEW_PASSWORD_LIMITS.min : 12}" maxlength="${NEW_PASSWORD_LIMITS.max}"${setup ? ' aria-describedby="setup-password-hint"' : branding.passwordNotice ? ' aria-describedby="auth-password-notice"' : ''} autocomplete="${setup ? 'new-password' : 'current-password'}" placeholder="${setup ? '공백 없는 ASCII 문자 15자 이상' : '비밀번호 입력'}"><button type="button" class="password-toggle" data-action="password-toggle" aria-label="비밀번호 표시" aria-pressed="false">${icon('eye')}</button></div></label>
+      ${setup ? `<p id="setup-password-hint" class="form-hint">${NEW_PASSWORD_HINT}</p><label class="field">비밀번호 확인<input name="confirm" type="password" required minlength="${NEW_PASSWORD_LIMITS.min}" maxlength="${NEW_PASSWORD_LIMITS.max}" autocomplete="new-password" placeholder="비밀번호를 한 번 더 입력해 주세요"></label>
         <div class="auth-setup-notice"><label class="field">비밀번호 안내문 <span class="optional">선택</span><textarea name="passwordNotice" rows="3" maxlength="2000" aria-describedby="setup-notice-hint" placeholder="예: 비밀번호는 운영 담당자에게 문의해 주세요.">${escape(branding.passwordNotice)}</textarea></label>
           <p id="setup-notice-hint" class="form-hint">로그인 화면에 표시할 문장이나 URL을 입력하세요. 문장 속 http:// 또는 https:// URL은 새 탭에서 열리는 링크가 되고 이동 전에 확인 팝업을 띄웁니다. 비워 두어도 시작할 수 있으며, 나중에 시스템 설정에서 수정할 수 있습니다.</p>
           <div id="setup-notice-preview" hidden><p class="auth-preview-label">로그인 화면 미리보기</p><div id="setup-notice-preview-content"></div></div>
@@ -430,6 +431,12 @@ async function signIn(event) {
   const setup = !state.initialized;
   const errorNode = $('#auth-error');
   errorNode.hidden = true;
+  if (setup && !validNewPassword(form.elements.password.value)) {
+    errorNode.textContent = NEW_PASSWORD_HINT;
+    errorNode.hidden = false;
+    form.elements.password.focus();
+    return;
+  }
   if (setup && form.elements.password.value !== form.elements.confirm.value) {
     errorNode.textContent = '두 비밀번호가 일치하지 않습니다.';
     errorNode.hidden = false;

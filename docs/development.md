@@ -15,6 +15,8 @@
 | 영역 | 파일과 역할 |
 | --- | --- |
 | 서버 | `server.mjs`: HTTP/HTTPS, 세션, 인증·출처 검사, API와 정적 파일 |
+| 시작 암호 | `lib/startup.mjs`: 실행 옵션·암호 파일 검증. `lib/setup-marker.mjs`: 시작 시 신규·완료·불완전 저장소 구분. [운영 계약](deployment.md#시작-암호로-백그라운드-준비) |
+| 비밀번호 정책 | `public/password-spec.js`: 신규 설정의 공통 문자·길이 규칙. `lib/vault.mjs`: 신규 설정과 기존 암호 검증 분리. [호환 계약](passwords.md) |
 | 이벤트·서비스 | `lib/services.mjs`: 서비스 목록·이벤트 서비스 선택 검증. `lib/vault.mjs`: 이벤트 검증·키 도출·암호화 저장 |
 | 이벤트 본문 | `public/event-content.js`: 기존 데이터의 본문 기본값. `public/event-body-ui.js`: 입력·미리보기·HTML 정제와 격리 표시 |
 | 저장·조회 | `lib/daily-storage.mjs`: 날짜별 파일과 관리 파일. `lib/daily-index.mjs`, `lib/record-queries.mjs`: 기간 요약·ID 색인·페이지 조회 |

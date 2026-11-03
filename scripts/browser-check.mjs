@@ -26,7 +26,7 @@ await fs.writeFile(brandingFile, JSON.stringify({ ...branding, passwordNotice: i
 const app = await createApp({ dataDir: path.join(runDir, 'data'), brandingFile, logMaintenance: { autoStart: false } });
 const address = await app.listen(0);
 const base = `http://127.0.0.1:${address.port}`;
-const password = 'browser-test-only-2026-암호';
+const password = 'browser-test-only-password-2026';
 const browser = spawn(executable, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--remote-debugging-port=0', `--user-data-dir=${path.join(runDir, 'profile')}`, 'about:blank'], { windowsHide: true, stdio: 'ignore' });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let socket;
@@ -416,6 +416,14 @@ try {
   await waitFor('!!document.querySelector("#auth-form") && document.documentElement.dataset.theme === "dark"', 'restore browser storage');
   await click(themeControl);
   assert.equal(mutations.length, 0, 'theme changes do not write to the server');
+  assert.equal(await evaluate('document.querySelector("#auth-form").elements.password.minLength'), 15);
+  assert.match(await evaluate('document.querySelector("#setup-password-hint").textContent'), /ASCII.*15~256/);
+  for (const value of ['x'.repeat(14), ' ' + password, password + ' ', 'internal space password', 'tab\tpassword-2026', 'nonbreaking\u00a0password', 'zero\u200bwidth-password', '암호화-password-2026', 'ｅｘａｍｐｌｅ-password']) {
+    await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.password.value = ${JSON.stringify(value)}; form.elements.confirm.value = ${JSON.stringify(value)}; form.requestSubmit(); })()`);
+    assert.equal(await evaluate('document.querySelector("#auth-error").textContent'), '새 비밀번호는 공백 없는 영문·숫자·특수문자(ASCII) 15~256자로 입력해 주세요.');
+    assert.equal(await evaluate('document.querySelector("#auth-form").elements.password.value'), value);
+    assert.equal(mutations.length, 0, 'invalid setup passwords do not submit or change settings');
+  }
   await evaluate(`(() => { const input = document.querySelector('#auth-form').elements.passwordNotice; input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   assert.equal(await evaluate('document.querySelector("#setup-notice-preview").hidden'), true);
   await evaluate(`(() => { const form = document.querySelector('#auth-form'); form.elements.passwordNotice.value = ${JSON.stringify(setupNotice)}; form.elements.passwordNotice.dispatchEvent(new Event('input', { bubbles: true })); form.elements.password.value = ${JSON.stringify(password)}; form.elements.confirm.value = 'mismatched-password'; form.requestSubmit(); })()`);
