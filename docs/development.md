@@ -45,6 +45,18 @@
 ## 검증
 
 ```sh
+node scripts/coverage-check.mjs
+```
+
+작업 완료 시 위 명령 또는 `npm run check`를 실행한다. 전체 Node 테스트를 실행하고, 기본적으로 HEAD 대비 staged·unstaged 변경과 Git에서 무시하지 않는 새 파일을 함께 검사한다. 이미 커밋한 브랜치 변경은 `node scripts/coverage-check.mjs --base main` 또는 `npm run check -- --base main`으로 검사한다. 이 경우 기준 ref와 HEAD의 공통 조상부터 현재 작업 파일까지 비교한다.
+
+대상은 `server.mjs`, `lib/**/*.mjs`, `lib/**/*.js`, `public/**/*.mjs`, `public/**/*.js`이며 `public/vendor/`는 제외한다. 삭제된 줄·파일과 빈 줄은 검사하지 않는다. 현재 파일의 추가·수정 줄 중 Node LCOV가 미실행으로 기록한 줄·분기를 파일명과 줄 번호로 경고한다. 줄 측정 항목이 없는 위치는 실행 여부를 판정하지 않으며, 파일 전체가 보고서에서 빠졌으면 측정 정보 없음으로 경고한다. 브라우저 전용 파일도 이 경고의 대상이며 해당 화면 검증 결과를 함께 확인한다.
+
+coverage 경고만으로는 실패하지 않는다. 테스트 실패, 잘못된 기준 ref, 측정 보고서 누락·빈 결과는 종료 코드 1로 처리한다. 실행별 보고서는 `.tmp/coverage-*/coverage.lcov`에 보관한다. Node 내장 실험적 coverage를 사용하며 브라우저 coverage는 합산하지 않는다. coverage는 실행 여부만 나타내므로 요구사항 누락, 검증문 적절성, 경계값 검증을 보장하지 않는다. 화면 변경 시 아래 브라우저 검증도 실행한다.
+
+coverage 없이 Node 테스트만 실행할 때는 다음 명령을 사용한다.
+
+```sh
 node --test test/*.test.mjs
 ```
 
