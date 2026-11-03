@@ -30,7 +30,11 @@ try {
   console.log(`\n변경 코드 coverage: ${changed.size}개 파일, 경고 ${warnings.length}개`);
   for (const warning of warnings) console.warn(`[coverage 경고] ${warning}`);
   console.log(`측정 보고서: ${path.relative(root, reportFile)}`);
-  console.log('coverage는 실행 여부를 측정합니다. 요구사항별 검증문·경계값과 관련 브라우저 검증도 확인하세요.');
+  console.log('\n[작업 완료 전 재확인 — 자동 검사로 판정하지 않는 항목]');
+  console.log('- 변경한 요구사항의 정상·오류·경계값을 의미 있는 검증문으로 테스트했는지 확인하세요.');
+  console.log('- 화면 동작을 변경했다면 관련 브라우저 검증을 실행했는지 확인하세요.');
+  console.log('- coverage 경고를 보완했거나 측정 한계·미검증 사유를 완료 보고에 남겼는지 확인하세요.');
+  console.log('- 커밋 시 type: 제목 형식, 제목에 변경 영역 표기, 필요한 본문의 짧은 대시 항목을 준수했는지 확인하세요.');
 } catch (error) {
   console.error(`[coverage 오류] ${error.message}`);
   process.exitCode = 1;
