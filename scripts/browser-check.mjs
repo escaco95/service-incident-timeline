@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { createApp } from '../server.mjs';
 import { checkEventDuplication } from './event-duplication-browser.mjs';
 import { checkEventBody } from './event-body-browser.mjs';
+import { checkVault } from './vault-browser.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const temporaryRoot = path.join(root, '.tmp');
@@ -1006,6 +1007,7 @@ try {
   await click(`document.querySelector('[data-close="detail-dialog"]')`);
   await checkEventDuplication({ app, evaluate, click, waitFor, command, screenshot, pressKey });
   await checkEventBody({ app, evaluate, click, waitFor, command, screenshot, resourceRequests: bodyResourceRequests });
+  await checkVault({ app, evaluate, click, waitFor, command, screenshot });
   // Audit timestamps use the same frozen clock as the browser's date filters.
   const auditFixtureTime = await evaluate('new Date().toISOString()');
   await app.vault.mutate(state => { for (const row of state.changes) row.at = auditFixtureTime; });

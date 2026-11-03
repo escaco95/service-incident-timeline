@@ -19,6 +19,7 @@
 | 이벤트 본문 | `public/event-content.js`: 기존 데이터의 본문 기본값. `public/event-body-ui.js`: 입력·미리보기·HTML 정제와 격리 표시 |
 | 저장·조회 | `lib/daily-storage.mjs`: 날짜별 파일과 관리 파일. `lib/daily-index.mjs`, `lib/record-queries.mjs`: 기간 요약·ID 색인·페이지 조회 |
 | 브랜딩 | `lib/branding.mjs`: 설정 읽기·검증·저장·충돌 검사. `public/theme.js`: 브라우저별 테마 |
+| 비밀 값 저장소 | `lib/secret-store.mjs`: 앱 공용 값 저장·버전·요청 직전 조회. `public/vault-spec.js`: 키·한도. `public/vault-ui.js`: 설정 화면. [계약](vault.md) |
 | 워크플로우 정의 | `public/workflow-spec.js`: 공통 노드 규격·제한. `lib/workflow-definition.mjs`: 정의·cron·템플릿 검증. `lib/workflow-file.mjs`: JSON 교환·참조 검증 |
 | 워크플로우 실행 | `lib/workflows.mjs`: 저장·버전·실행 접수. `lib/workflow-engine.mjs`: 예약·큐·HTTP 호출. `lib/service-state.mjs`: 서비스 상태 집계·보류 |
 | 노드 계산·Dry-Run | `lib/workflow-step.mjs`, `lib/workflow-values.mjs`: 실제 실행·모의 실행의 공통 계산. `lib/workflow-dry-run.mjs`, `lib/workflow-dry-run-service.mjs`: 모의 실행·일정 경계 재현 |
@@ -53,7 +54,7 @@ node --test test/*.test.mjs
 
 | 명령 | 검증 범위 |
 | --- | --- |
-| `node scripts/browser-check.mjs` | 캘린더·타임라인·수기 편집·이벤트 복제·메모와 Text/HTML 본문·설정·감사 조회·모바일·XSS 렌더링·외부 리소스 차단·안내문 링크와 외부 이동 확인·세션 |
+| `node scripts/browser-check.mjs` | 캘린더·타임라인·수기 편집·이벤트 복제·메모와 Text/HTML 본문·설정·비밀 값 등록·교체·삭제·충돌·감사 조회·모바일·XSS 렌더링·외부 리소스 차단·안내문 링크와 외부 이동 확인·세션 |
 | `node scripts/http-browser-check.mjs` | 브라우저 내부에서 `navix.test`를 로컬 서버로 연결한 일반 HTTP 환경. `--localhost`로 로컬 주소 비교 |
 | `node scripts/workflow-browser-check.mjs` | 워크플로우 파일 교환·편집·저장·실행·Dry-Run·보류·재평가 |
 | `node scripts/danger-zone-browser-check.mjs` | 부분·전체 초기화 확인과 취소 |

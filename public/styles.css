@@ -1904,6 +1904,25 @@ svg.icon {
   padding:28px
 }
 
+.vault-table { width:100%; table-layout:fixed; border-collapse:collapse; margin:16px 0; font-size:13px; text-align:left; }
+.vault-table th, .vault-table td { padding:12px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+.vault-table thead th { color:var(--muted); font-weight:500; }
+.vault-table th:first-child { width:32%; }
+.vault-table th:last-child { width:148px; }
+.vault-table tbody th { font-weight:400; }
+.vault-table code { overflow-wrap:anywhere; }
+.vault-table .form-hint { display:block; margin:4px 0 0; }
+.vault-table input { min-width:0; width:100%; }
+.vault-table .field { margin:0; }
+.vault-table .field input { margin-top:0; }
+.vault-actions { display:flex; gap:8px; }
+@media(max-width:760px) {
+  .vault-table, .vault-table tbody, .vault-table tfoot { display:block; }
+  .vault-table thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+  .vault-table tr { display:grid; grid-template-columns:minmax(0,1fr); padding:12px 0; border-bottom:1px solid var(--line); }
+  .vault-table th, .vault-table td { display:block; padding:6px 0; border:0; }
+  .vault-table th:first-child, .vault-table th:last-child { width:auto; }
+}
 .settings-panel-title {
   margin:0 0 10px;
   font-size:18px;

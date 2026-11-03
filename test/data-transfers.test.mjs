@@ -63,6 +63,25 @@ async function repack(f, data) {
   await writer.add('manifest.json', Buffer.from(JSON.stringify(manifest))); await writer.finish(); return fs.readFile(file);
 }
 
+test('전체 ZIP은 공용 vault 값을 보존하고 복원 시 버전을 갱신하며 기존 ZIP도 허용한다', async t => {
+  const f = await fixture(t); await f.setup();
+  const value = 'backup-global-vault-private-value';
+  await f.app.secretStore.save({ version: 0, key: 'api_token', value });
+  const { bytes } = await f.exported(), exported = await contents(f, bytes);
+  assert.equal(exported.get('settings.json').metadata.secretStore.entries.api_token, value);
+  await f.app.secretStore.save({ version: 1, key: 'api_token', value: 'value-to-replace' });
+  const uploaded = await f.uploaded(bytes); assert.equal(uploaded.status, 'ready', uploaded.error);
+  assert.equal((await f.restore(uploaded)).status, 'completed');
+  assert.equal(f.app.secretStore.resolve(['api_token']).api_token, value);
+  assert.ok(f.app.secretStore.read().version > 2);
+  await f.restart(); await f.call('/api/login', 'POST', { password });
+  assert.equal(f.app.secretStore.resolve(['api_token']).api_token, value);
+  delete exported.get('settings.json').metadata.secretStore;
+  const older = await f.uploaded(await repack(f, exported)); assert.equal(older.status, 'ready', older.error);
+  assert.equal((await f.restore(older)).status, 'completed');
+  assert.deepEqual(f.app.secretStore.read(), { version: 0, keys: [] });
+});
+
 test('workflow review results and service holds survive archive validation, restore and restart', async t => {
   const f = await fixture(t); await f.setup();
   const flow = await f.app.workflows.create({ name: 'Held service', requestId: randomUUID(), nodes: [

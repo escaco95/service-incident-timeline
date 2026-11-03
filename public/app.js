@@ -2,6 +2,7 @@ import { EventLoader } from './event-loader.js';
 import { severity, createDateUtils } from './date-utils.js';
 import { createServicesUI } from './services-ui.js';
 import { createLogPolicyUI } from './log-policy-ui.js';
+import { createVaultUI } from './vault-ui.js';
 import { createDangerZoneUI } from './danger-zone-ui.js';
 import { createDataTransferUI } from './data-transfer-ui.js';
 import { createAuditUI } from './audit-ui.js';
@@ -47,6 +48,7 @@ let brandingVersion = null;
 let brandingRequest = 0;
 let servicesSettingsLoaded = false;
 let logPolicySettingsLoaded = false;
+let vaultSettingsLoaded = false;
 let settingsBusy = false;
 let toastTimer;
 let timelineStart;
@@ -98,6 +100,7 @@ async function api(url, options = {}) {
 
 const servicesUI = createServicesUI({ api, escape, generation: () => sessionGeneration, authenticated: () => state.authenticated, onChanged: () => loadEvents(), onSavingChange: setSettingsBusy });
 const logPolicyUI = createLogPolicyUI({ api, generation: () => sessionGeneration, authenticated: () => state.authenticated, onSavingChange: setSettingsBusy, toast, formatTime: value => formatDateTime(value) });
+const vaultUI = createVaultUI({ api, escape, generation: () => sessionGeneration, authenticated: () => state.authenticated, onSavingChange: setSettingsBusy, toast });
 let pendingAuditEvent;
 const auditUI = createAuditUI({ api, escape, icon, generation: () => sessionGeneration, authenticated: () => state.authenticated, active: () => state.view === 'audit', today: () => dateKey(new Date()), dateBoundary: value => startOfDay(value).toISOString(), formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()), events: () => state.events, openEvent: id => openDetail(id) });
 const workflowUI = createWorkflowUI({ api, authenticated: () => state.authenticated, generation: () => sessionGeneration, active: () => state.view === 'workflow', openRuns: (id, runId) => { state.view = 'audit'; renderApp(); auditUI.openWorkflow(id, runId); }, escape, toast, formatTime: value => formatDateTime(value), dateSummary: () => summaryContext(new Date()) });
@@ -111,6 +114,7 @@ async function applyDataReset(result) {
   else dataTransferUI.clear();
   sessionGeneration++; syncRequest++; eventLoader.clear(); detailEvent = null; state.syncing = false; state.revision = -1;
   auditUI.clear(); logPolicyUI.clear(); logPolicySettingsLoaded = false;
+  vaultUI.clear(); vaultSettingsLoaded = false;
   if (['workflows', 'restore'].includes(result.target)) workflowUI.clear();
   for (const dialog of document.querySelectorAll('dialog')) dialog.close();
   if (['events', 'restore'].includes(result.target)) state.events = [];
@@ -165,6 +169,10 @@ function selectSettingsGroup(group) {
     logPolicySettingsLoaded = true;
     logPolicyUI.loadSettings();
   }
+  if (group === 'vault' && !vaultSettingsLoaded) {
+    vaultSettingsLoaded = true;
+    vaultUI.loadSettings();
+  }
 }
 
 $('.settings-nav').addEventListener('click', event => {
@@ -184,6 +192,7 @@ $('.settings-nav').addEventListener('keydown', event => {
 function openBrandingSettings() {
   servicesSettingsLoaded = false;
   logPolicySettingsLoaded = false;
+  vaultSettingsLoaded = false;
   selectSettingsGroup('branding');
   $('#branding-form').reset();
   updateBrandingNoticePreview();
@@ -480,6 +489,7 @@ function endSession() {
   state.highlightedId = null;
   servicesUI.clear();
   logPolicyUI.clear();
+  vaultUI.clear();
   dangerZoneUI.clear();
   dataTransferUI.clear();
   auditUI.clear();

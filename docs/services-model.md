@@ -12,7 +12,7 @@
 
 ## 내부 저장 구조
 
-복호화된 내부 schema는 **5**다. `events`, `catalog: { version, services }`, `changes`, `workflows`, `workflowRuns`와 저장소 revision·생성·수정 시각으로 구성한다. 로그 관리 정책과 실행 결과는 `logPolicy`, `logMaintenance`, 서비스 상태·보류는 `serviceState`, 초기화 요청의 중복 방지 정보는 `resetRequests`에 둔다. Dry-Run 입력값은 각 워크플로우의 별도 설정으로 보관한다. AES-256-GCM 봉투 version 1을 사용한다.
+복호화된 내부 schema는 **5**다. `events`, `catalog: { version, services }`, `changes`, `workflows`, `workflowRuns`와 저장소 revision·생성·수정 시각으로 구성한다. 로그 관리 정책과 실행 결과는 `logPolicy`, `logMaintenance`, 서비스 상태·보류는 `serviceState`, 초기화 요청의 중복 방지 정보는 `resetRequests`, 앱 공용 비밀 값은 `secretStore`에 둔다. [비밀 값 저장소 계약](vault.md)을 따른다. Dry-Run 입력값은 각 워크플로우의 별도 설정으로 보관한다. AES-256-GCM 봉투 version 1을 사용한다.
 
 - schema 5만 지원한다. 지원하지 않는 형식은 로그인 시 409로 알리며 자동 이관하거나 원본을 초기화·덮어쓰지 않는다.
 - 저장소를 읽을 때 현재 모델의 필드만 메모리에 올린다. 사용하지 않는 최상위 필드는 다음 정상 저장부터 제외한다. 현재 이벤트·서비스·변경 기록·워크플로우·실행 이력은 유지한다.

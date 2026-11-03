@@ -1,3 +1,5 @@
+import { validVaultKey } from './vault-spec.js';
+
 // Shared by the editor, validator and generated file schema.
 export const LIMITS = Object.freeze({ nodes: 100, edges: 200, bytes: 1048576, attempts: 100 });
 export const TRIGGERS = ['start', 'end', 'cron', 'service-state'];
@@ -34,6 +36,7 @@ export function parseDatePattern(pattern) {
 }
 export const SWITCH_LIMITS = Object.freeze({ cases: 20, value: 2000 });
 export function validPath(path, relative = false) {
+  if (!relative && typeof path === 'string' && path.startsWith('vault.')) return validVaultKey(path.slice(6));
   return typeof path === 'string' && path.length <= 200 && (relative || /^(event|trigger|response|nodes|run|secrets|context)\./.test(path)) && path.split('.').every(key => /^[\w-]+$/.test(key) && !['__proto__', 'prototype', 'constructor'].includes(key));
 }
 export function validateSwitchCases(cases) {

@@ -5,6 +5,7 @@ import { LIMITS } from './public/workflow-spec.js';
 import { DRY_RUN_LIMITS } from './public/workflow-dry-run-spec.js';
 import { Workflows } from './lib/workflows.mjs';
 import { WorkflowEngine } from './lib/workflow-engine.mjs';
+import { SecretStore } from './lib/secret-store.mjs';
 import { LogMaintenance } from './lib/log-maintenance.mjs';
 import { RESET_TARGETS, resetData, hasPendingSystemReset, beginSystemReset, finishSystemReset } from './lib/reset.mjs';
 import { enrollSetupMarker, operatorResetRequested } from './lib/setup-marker.mjs';
@@ -24,6 +25,8 @@ const ASSETS = new Map([
   ['/random-id.js', ['random-id.js', 'text/javascript; charset=utf-8']],
   ['/services-ui.js', ['services-ui.js', 'text/javascript; charset=utf-8']],
   ['/log-policy-ui.js', ['log-policy-ui.js', 'text/javascript; charset=utf-8']],
+  ['/vault-ui.js', ['vault-ui.js', 'text/javascript; charset=utf-8']],
+  ['/vault-spec.js', ['vault-spec.js', 'text/javascript; charset=utf-8']],
   ['/danger-zone-ui.js', ['danger-zone-ui.js', 'text/javascript; charset=utf-8']],
   ['/data-transfer-ui.js', ['data-transfer-ui.js', 'text/javascript; charset=utf-8']],
   ['/audit-ui.js', ['audit-ui.js', 'text/javascript; charset=utf-8']],
@@ -67,6 +70,7 @@ export async function createApp(options = {}) {
   }
   catch (error) { await vault.close(); throw error; }
   const workflows = new Workflows(vault, options.workflows);
+  const secretStore = new SecretStore(vault);
   const workflowEngine = new WorkflowEngine(vault, options.workflows);
   const logMaintenance = new LogMaintenance(vault, { ...options.logMaintenance, timezone: () => brandingStore.branding.timezone });
   let transfers;
@@ -346,6 +350,14 @@ export async function createApp(options = {}) {
         if (req.method === 'GET') return send(res, 200, logMaintenance.read());
         if (req.method === 'PUT') return send(res, 200, await logMaintenance.save(await json(req)));
       }
+      if (pathname === '/api/settings/vault') {
+        if (req.method === 'GET') return send(res, 200, secretStore.read());
+        if (req.method === 'PUT') {
+          const input = await json(req);
+          try { return send(res, 200, await secretStore.save(input)); }
+          finally { if (input && typeof input === 'object') input.value = null; }
+        }
+      }
       if (pathname === '/api/services') {
         if (req.method === 'GET') return send(res, 200, vault.readServices());
         if (req.method === 'PUT') return send(res, 200, await vault.saveServices(await json(req)));
@@ -391,7 +403,7 @@ export async function createApp(options = {}) {
   markerTimer.unref();
 
   return {
-    server, vault, workflows, workflowEngine, logMaintenance, transfers, get branding() { return brandingStore.branding; },
+    server, vault, secretStore, workflows, workflowEngine, logMaintenance, transfers, get branding() { return brandingStore.branding; },
     async listen(port = 8787, host = '127.0.0.1') {
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       return server.address();

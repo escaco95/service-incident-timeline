@@ -28,6 +28,7 @@ Object.assign(changeNames, { 'log-policy-updated': '로그 관리 정책 변경'
 const maintenanceTypes = new Set(['audit-rotated', 'events-expired', 'log-maintenance-failed']);
 Object.assign(changeNames, { 'workflow-created': '워크플로우 생성', 'workflow-updated': '워크플로우 저장', 'workflow-enabled': '워크플로우 ON/OFF', 'workflow-deleted': '워크플로우 삭제', 'workflow-run-requested': '수동 실행 요청', 'workflow-rerun-requested': '다시 실행 요청', 'workflow-run-canceled': '실행 중지 요청' });
 changeNames['data-restored'] = '데이터 복원';
+Object.assign(changeNames, { 'vault-value-created': '비밀 값 등록', 'vault-value-updated': '비밀 값 교체', 'vault-value-deleted': '비밀 값 삭제' });
 
 export function createAuditUI({ api, escape, icon, generation, authenticated, active, today, dateBoundary, formatTime, dateSummary, events, openEvent }) {
   let request = 0, detailRequest = 0, filters = { kind: 'workflows', page: 1 };
